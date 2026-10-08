@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Phase 4 Timer & Persistence Tests — StudyTracker</title>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #f8fafc; padding: 20px; line-height: 1.5; }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; font-weight: bold; }
+    .summary { margin-top: 20px; padding: 10px; border-top: 1px solid #334155; font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+  <h1>StudyTracker Phase 4 — Timer & Persistence Verification</h1>
+  <div id="results"></div>
+
+  <script type="module">
+    import { initDB, clear, get, STORES } from './js/db/database.js';
+    import { createSubject } from './js/services/subjectService.js';
+    import { saveSession, getAllSessions, getSessionsByDate, deleteSession } from './js/services/studyService.js';
+    import { timerService } from './js/services/timerService.js';
+
+    const resultsEl = document.getElementById('results');
+    let totalTests = 0;
+    let passedTests = 0;
+
+    function assert(condition, message) {
+      totalTests++;
+      const div = document.createElement('div');
+      if (condition) {
+        passedTests++;
+        div.className = 'pass';
+        div.textContent = `[PASS] ${message}`;
+      } else {
+        div.className = 'fail';
+        div.textContent = `[FAIL] ${message}`;
+      }
+      resultsEl.appendChild(div);
+    }
+
+    async function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    async function runTests() {
+      try {
+        await initDB();
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+        await clear(STORES.ACTIVE_SESSION);
+
+        // Setup test subject
+        const sub = await createSubject({ name: 'Web Architecture', color: '#3b82f6' });
+
+        // Test 1: Start timer
+        await timerService.start({ subjectId: sub.id, topic: 'IndexedDB Transactions' });
+        const stateRunning = timerService.getState();
+        assert(stateRunning.status === 'running', 'timerService enters "running" state on start');
+        assert(stateRunning.subjectId === sub.id, 'timerService retains subjectId');
+        assert(stateRunning.topic === 'IndexedDB Transactions', 'timerService retains topic');
+
+        // Test 2: Active Session persisted in IndexedDB
+        const activeRecord = await get(STORES.ACTIVE_SESSION, 'current');
+        assert(activeRecord !== null, 'Active session record saved in STORES.ACTIVE_SESSION');
+        assert(activeRecord.status === 'running' && activeRecord.startTime === stateRunning.startTime, 'Stored active session matches running startTime');
+
+        // Test 3: Elapsed calculation via timestamps (wait 1.2s)
+        await sleep(1200);
+        const elapsedSec = timerService.getElapsedSeconds();
+        assert(elapsedSec >= 1, `Elapsed time advances based on timestamps (got ${elapsedSec}s)`);
+
+        // Test 4: Stop timer
+        timerService.stop();
+        const stateStopped = timerService.getState();
+        assert(stateStopped.status === 'completed', 'timerService enters "completed" state on stop');
+        assert(stateStopped.endTime !== null, 'timerService records exact endTime');
+
+        // Test 5: Save completed session
+        const saved = await timerService.saveCompletedSession({ notes: 'Learned schema migration rules' });
+        assert(saved && saved.id, 'saveCompletedSession creates saved session record');
+        assert(saved.duration >= 1, `Saved duration is canonical seconds integer (${saved.duration}s)`);
+        assert(saved.notes === 'Learned schema migration rules', 'Saved session retains notes');
+        assert(saved.date.length === 10, `Saved session has calendar date string YYYY-MM-DD (${saved.date})`);
+
+        // Test 6: Active session cleared after save
+        const activeAfterSave = await get(STORES.ACTIVE_SESSION, 'current');
+        assert(activeAfterSave === null, 'Active session cleared from IndexedDB after saving');
+        assert(timerService.getState().status === 'idle', 'timerService returns to "idle" state');
+
+        // Test 7: Active Session Recovery Simulation (browser reload test)
+        // Manually place an active session that started 10 seconds ago
+        const pastStart = Date.now() - 10000;
+        await clear(STORES.ACTIVE_SESSION);
+        const { put } = await import('./js/db/database.js');
+        await put(STORES.ACTIVE_SESSION, {
+          id: 'current',
+          subjectId: sub.id,
+          topic: 'Recovery Test',
+          startTime: pastStart,
+          status: 'running'
+        });
+
+        // Re-initialize timerService to simulate app boot
+        timerService.isInitialized = false;
+        timerService.status = 'idle';
+        const restored = await timerService.init();
+        assert(restored === true, 'timerService.init() successfully recovers active session from IndexedDB');
+        const stateRestored = timerService.getState();
+        assert(stateRestored.status === 'running', 'Restored state is "running"');
+        assert(stateRestored.elapsedSeconds >= 10, `Recovered elapsed time matches stored past startTime (got ${stateRestored.elapsedSeconds}s)`);
+
+        // Test 8: Discard session
+        await timerService.discardCompletedSession();
+        const activeAfterDiscard = await get(STORES.ACTIVE_SESSION, 'current');
+        assert(activeAfterDiscard === null, 'Discard clears active session from IndexedDB');
+        assert(timerService.getState().status === 'idle', 'timerService state returns to idle after discard');
+
+        // Test 9: StudyService query functions
+        const allSessions = await getAllSessions();
+        assert(allSessions.length === 1, 'getAllSessions returns saved session');
+        const todaySessions = await getSessionsByDate(saved.date);
+        assert(todaySessions.length === 1, 'getSessionsByDate returns session for date');
+
+        // Clean up
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+        await clear(STORES.ACTIVE_SESSION);
+
+        const summary = document.createElement('div');
+        summary.className = 'summary';
+        const msg = passedTests === totalTests
+          ? `ALL TESTS PASSED (${passedTests}/${totalTests})! PHASE 4 TIMER READY.`
+          : `TESTS FAILED (${passedTests}/${totalTests})`;
+        summary.innerHTML = `<strong class="${passedTests === totalTests ? 'pass' : 'fail'}">${msg}</strong>`;
+        resultsEl.appendChild(summary);
+
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: passedTests === totalTests, total: totalTests, passedTests, msg })
+          });
+        } catch (_) {}
+      } catch (err) {
+        const div = document.createElement('div');
+        div.className = 'fail';
+        div.textContent = `Fatal test error: ${err.message}\n${err.stack}`;
+        resultsEl.appendChild(div);
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: false, error: err.message })
+          });
+        } catch (_) {}
+      }
+    }
+
+    runTests();
+  </script>
+</body>
+</html>

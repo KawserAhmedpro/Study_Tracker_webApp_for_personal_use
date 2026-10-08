@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Phase 3 Subject Management Tests — StudyTracker</title>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #f8fafc; padding: 20px; line-height: 1.5; }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; font-weight: bold; }
+    .summary { margin-top: 20px; padding: 10px; border-top: 1px solid #334155; font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+  <h1>StudyTracker Phase 3 — Subject Management Verification</h1>
+  <div id="results"></div>
+
+  <script type="module">
+    import { initDB, clear, put, STORES } from './js/db/database.js';
+    import {
+      createSubject,
+      getAllSubjects,
+      getSubjectById,
+      updateSubject,
+      deleteSubject,
+      restoreSubject
+    } from './js/services/subjectService.js';
+
+    const resultsEl = document.getElementById('results');
+    let totalTests = 0;
+    let passedTests = 0;
+
+    function assert(condition, message) {
+      totalTests++;
+      const div = document.createElement('div');
+      if (condition) {
+        passedTests++;
+        div.className = 'pass';
+        div.textContent = `[PASS] ${message}`;
+      } else {
+        div.className = 'fail';
+        div.textContent = `[FAIL] ${message}`;
+      }
+      resultsEl.appendChild(div);
+    }
+
+    async function runTests() {
+      try {
+        await initDB();
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+
+        // Test 1: Create Subject
+        const sub1 = await createSubject({ name: 'ASP.NET Core', color: '#6366f1' });
+        assert(sub1 && sub1.id && sub1.name === 'ASP.NET Core', 'createSubject creates subject with valid ID and name');
+        assert(sub1.color === '#6366f1', 'createSubject assigns correct color');
+        assert(sub1.archived === false, 'createSubject initializes with archived = false');
+
+        // Test 2: Validation - Duplicate name rejection
+        let duplicateCaught = false;
+        try {
+          await createSubject({ name: 'asp.net core' });
+        } catch (e) {
+          duplicateCaught = true;
+        }
+        assert(duplicateCaught, 'createSubject rejects duplicate active subject name (case-insensitive)');
+
+        // Test 3: Validation - Empty name rejection
+        let emptyCaught = false;
+        try {
+          await createSubject({ name: '   ' });
+        } catch (e) {
+          emptyCaught = true;
+        }
+        assert(emptyCaught, 'createSubject rejects empty or whitespace-only subject name');
+
+        // Test 4: Create Second Subject
+        const sub2 = await createSubject({ name: 'Machine Learning', color: '#10b981' });
+        assert(sub2 && sub2.name === 'Machine Learning', 'createSubject creates second subject');
+
+        // Test 5: List Subjects
+        const activeList = await getAllSubjects({ includeArchived: false });
+        assert(activeList.length === 2, 'getAllSubjects returns 2 active subjects');
+        assert(activeList[0].name === 'ASP.NET Core' && activeList[1].name === 'Machine Learning', 'Subjects are alphabetically sorted');
+
+        // Test 6: Update Subject
+        const updated = await updateSubject(sub1.id, { name: 'ASP.NET Core & C#', color: '#ec4899' });
+        assert(updated.name === 'ASP.NET Core & C#' && updated.color === '#ec4899', 'updateSubject renames and updates color');
+
+        // Test 7: Safe Deletion without sessions (Permanent delete)
+        const delRes2 = await deleteSubject(sub2.id);
+        assert(delRes2.action === 'deleted', 'deleteSubject permanently removes subject with 0 sessions');
+        const checkDel = await getSubjectById(sub2.id);
+        assert(checkDel === null, 'Deleted subject is removed from IndexedDB');
+
+        // Test 8: Safe Deletion WITH sessions (Archiving)
+        // Add a mock study session referencing sub1
+        await put(STORES.SESSIONS, {
+          id: 'mock_sess_1',
+          subjectId: sub1.id,
+          topic: 'Minimal APIs',
+          duration: 3600,
+          date: '2026-10-08',
+          startTime: '2026-10-08T10:00:00.000Z',
+          endTime: '2026-10-08T11:00:00.000Z'
+        });
+
+        const delRes1 = await deleteSubject(sub1.id);
+        assert(delRes1.action === 'archived', 'deleteSubject safely archives subject instead of deleting when sessions exist');
+        
+        const archivedSub = await getSubjectById(sub1.id);
+        assert(archivedSub && archivedSub.archived === true, 'Subject has archived = true in database');
+
+        const activeAfterArchive = await getAllSubjects({ includeArchived: false });
+        assert(activeAfterArchive.length === 0, 'getAllSubjects({ includeArchived: false }) excludes archived subject');
+
+        const allWithArchived = await getAllSubjects({ includeArchived: true });
+        assert(allWithArchived.length === 1 && allWithArchived[0].archived === true, 'getAllSubjects({ includeArchived: true }) includes archived subject');
+
+        // Test 9: Restore Subject
+        const restored = await restoreSubject(sub1.id);
+        assert(restored.archived === false, 'restoreSubject restores archived subject back to active');
+
+        const activeAfterRestore = await getAllSubjects({ includeArchived: false });
+        assert(activeAfterRestore.length === 1, 'Restored subject appears in active list again');
+
+        // Clean up test records
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+
+        const summary = document.createElement('div');
+        summary.className = 'summary';
+        const msg = passedTests === totalTests
+          ? `ALL TESTS PASSED (${passedTests}/${totalTests})! PHASE 3 SUBJECT MANAGEMENT READY.`
+          : `TESTS FAILED (${passedTests}/${totalTests})`;
+        summary.innerHTML = `<strong class="${passedTests === totalTests ? 'pass' : 'fail'}">${msg}</strong>`;
+        resultsEl.appendChild(summary);
+
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: passedTests === totalTests, total: totalTests, passedTests, msg })
+          });
+        } catch (_) {}
+      } catch (err) {
+        const div = document.createElement('div');
+        div.className = 'fail';
+        div.textContent = `Fatal test error: ${err.message}\n${err.stack}`;
+        resultsEl.appendChild(div);
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: false, error: err.message })
+          });
+        } catch (_) {}
+      }
+    }
+
+    runTests();
+  </script>
+</body>
+</html>

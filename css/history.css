@@ -1,0 +1,158 @@
+/* ==========================================================================
+   History Page Styles
+   Filter bars, date-grouped session lists, session card actions.
+   ========================================================================== */
+
+.history-filter-bar {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+}
+
+@media (min-width: 680px) {
+  .history-filter-bar {
+    grid-template-columns: 2fr 1.2fr 1.2fr auto;
+    align-items: center;
+  }
+}
+
+.search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-icon {
+  position: absolute;
+  left: 0.75rem;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.search-input-wrap .form-input {
+  padding-left: 2.25rem;
+}
+
+/* Date Grouping */
+.history-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.date-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.date-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.date-group-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.date-group-total {
+  font-size: 0.825rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.history-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.history-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 1rem 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+@media (min-width: 640px) {
+  .history-card {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+.history-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.history-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.history-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.history-card-topic {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.history-card-notes {
+  font-size: 0.825rem;
+  color: var(--text-secondary);
+  font-style: italic;
+  margin-top: 0.2rem;
+}
+
+.history-card-meta {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.history-card-side {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+  flex-shrink: 0;
+}
+
+.history-card-duration {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--primary-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}

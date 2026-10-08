@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Phase 2 Database Tests — StudyTracker</title>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #f8fafc; padding: 20px; line-height: 1.5; }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; font-weight: bold; }
+    .summary { margin-top: 20px; padding: 10px; border-top: 1px solid #334155; font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+  <h1>StudyTracker Phase 2 — IndexedDB & Data Model Verification</h1>
+  <div id="results"></div>
+
+  <script type="module">
+    import { initDB, get, getAll, getAllByIndex, put, putMany, remove, clear, count, STORES } from './js/db/database.js';
+    import { validateSubject, validateSession, validateSettings } from './js/db/schema.js';
+
+    const resultsEl = document.getElementById('results');
+    let totalTests = 0;
+    let passedTests = 0;
+
+    function assert(condition, message) {
+      totalTests++;
+      const div = document.createElement('div');
+      if (condition) {
+        passedTests++;
+        div.className = 'pass';
+        div.textContent = `[PASS] ${message}`;
+      } else {
+        div.className = 'fail';
+        div.textContent = `[FAIL] ${message}`;
+      }
+      resultsEl.appendChild(div);
+    }
+
+    async function runTests() {
+      try {
+        // Test 1: DB Initialization
+        const db = await initDB();
+        assert(db !== null && db.name === 'studytracker_db', 'IndexedDB initialized with name "studytracker_db"');
+        assert(db.objectStoreNames.contains(STORES.SUBJECTS), 'Store "subjects" exists');
+        assert(db.objectStoreNames.contains(STORES.SESSIONS), 'Store "studySessions" exists');
+        assert(db.objectStoreNames.contains(STORES.SETTINGS), 'Store "settings" exists');
+        assert(db.objectStoreNames.contains(STORES.ACTIVE_SESSION), 'Store "activeSession" exists');
+
+        // Test 2: Default Settings seeded
+        const settings = await get(STORES.SETTINGS, 'app_settings');
+        assert(settings !== null && settings.dailyGoalSeconds === 14400, 'Default settings seeded (4 hours = 14400s)');
+
+        // Test 3: Validation functions
+        const validSub = validateSubject({ id: 's1', name: 'Math', color: '#ff0000' });
+        assert(validSub.valid === true, 'validateSubject accepts valid subject');
+        const invalidSub = validateSubject({ id: 's2' });
+        assert(invalidSub.valid === false && invalidSub.errors.length > 0, 'validateSubject rejects subject without name');
+
+        const validSess = validateSession({
+          id: 'sess1',
+          subjectId: 's1',
+          topic: 'Calculus',
+          startTime: '2026-10-08T10:00:00.000Z',
+          endTime: '2026-10-08T11:00:00.000Z',
+          duration: 3600,
+          date: '2026-10-08'
+        });
+        assert(validSess.valid === true, 'validateSession accepts canonical duration in seconds and YYYY-MM-DD date');
+
+        const invalidSess = validateSession({
+          id: 'sess2',
+          duration: '1h 30m', // invalid string
+          date: 'invalid-date'
+        });
+        assert(invalidSess.valid === false, 'validateSession rejects invalid duration strings and malformed dates');
+
+        // Test 4: Subject CRUD operations
+        await clear(STORES.SUBJECTS);
+        await put(STORES.SUBJECTS, { id: 'sub_test_1', name: 'Computer Science', color: '#3b82f6', archived: false, createdAt: '2026-10-08' });
+        const fetchedSub = await get(STORES.SUBJECTS, 'sub_test_1');
+        assert(fetchedSub && fetchedSub.name === 'Computer Science', 'Subject successfully inserted and retrieved');
+
+        const subCount = await count(STORES.SUBJECTS);
+        assert(subCount === 1, 'Subject count returns correct number (1)');
+
+        // Test 5: Sessions Index Queries
+        await clear(STORES.SESSIONS);
+        const testSessions = [
+          { id: 'sess_1', subjectId: 'sub_test_1', topic: 'Algorithms', duration: 1800, date: '2026-10-08', startTime: '2026-10-08T09:00:00.000Z', endTime: '2026-10-08T09:30:00.000Z' },
+          { id: 'sess_2', subjectId: 'sub_test_1', topic: 'Data Structures', duration: 3600, date: '2026-10-08', startTime: '2026-10-08T10:00:00.000Z', endTime: '2026-10-08T11:00:00.000Z' },
+          { id: 'sess_3', subjectId: 'sub_test_2', topic: 'History', duration: 2400, date: '2026-10-07', startTime: '2026-10-07T14:00:00.000Z', endTime: '2026-10-07T14:40:00.000Z' }
+        ];
+        await putMany(STORES.SESSIONS, testSessions);
+
+        const todaySessions = await getAllByIndex(STORES.SESSIONS, 'date', '2026-10-08');
+        assert(todaySessions.length === 2, 'getAllByIndex retrieves matching records for date 2026-10-08 (2 sessions)');
+
+        const csSessions = await getAllByIndex(STORES.SESSIONS, 'subjectId', 'sub_test_1');
+        assert(csSessions.length === 2, 'getAllByIndex retrieves matching records for subjectId (2 sessions)');
+
+        // Test 6: Deletion
+        await remove(STORES.SESSIONS, 'sess_1');
+        const afterDelete = await get(STORES.SESSIONS, 'sess_1');
+        assert(afterDelete === null, 'Session successfully deleted');
+
+        // Test 7: Active Session persistence
+        await put(STORES.ACTIVE_SESSION, { id: 'current', subjectId: 'sub_test_1', startTime: Date.now(), status: 'running' });
+        const active = await get(STORES.ACTIVE_SESSION, 'current');
+        assert(active && active.status === 'running', 'Active session record saved and retrieved from activeSession store');
+        await clear(STORES.ACTIVE_SESSION);
+
+        // Clean up test data
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+
+        const summary = document.createElement('div');
+        summary.className = 'summary';
+        const msg = passedTests === totalTests
+          ? `ALL TESTS PASSED (${passedTests}/${totalTests})! PHASE 2 INDEXEDDB READY.`
+          : `TESTS FAILED (${passedTests}/${totalTests})`;
+        summary.innerHTML = `<strong class="${passedTests === totalTests ? 'pass' : 'fail'}">${msg}</strong>`;
+        resultsEl.appendChild(summary);
+        window.__testsComplete = true;
+        window.__testsPassed = (passedTests === totalTests);
+
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: passedTests === totalTests, total: totalTests, passedTests, msg })
+          });
+        } catch (_) {}
+      } catch (err) {
+        const div = document.createElement('div');
+        div.className = 'fail';
+        div.textContent = `Fatal test error: ${err.message}\n${err.stack}`;
+        resultsEl.appendChild(div);
+        window.__testsComplete = true;
+        window.__testsPassed = false;
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: false, error: err.message })
+          });
+        } catch (_) {}
+      }
+    }
+
+    runTests();
+  </script>
+</body>
+</html>

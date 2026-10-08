@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Phase 6 Dashboard Calculations Tests — StudyTracker</title>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #f8fafc; padding: 20px; line-height: 1.5; }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; font-weight: bold; }
+    .summary { margin-top: 20px; padding: 10px; border-top: 1px solid #334155; font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+  <h1>StudyTracker Phase 6 — Dashboard Calculations Verification</h1>
+  <div id="results"></div>
+
+  <script type="module">
+    import { initDB, clear, put, STORES } from './js/db/database.js';
+    import { getLocalDateString, offsetDateString } from './js/utils/dateUtils.js';
+    import { calculateStreaks, getDashboardData } from './js/services/statisticsService.js';
+    import { createSubject } from './js/services/subjectService.js';
+    import { saveSession } from './js/services/studyService.js';
+
+    const resultsEl = document.getElementById('results');
+    let totalTests = 0;
+    let passedTests = 0;
+
+    function assert(condition, message) {
+      totalTests++;
+      const div = document.createElement('div');
+      if (condition) {
+        passedTests++;
+        div.className = 'pass';
+        div.textContent = `[PASS] ${message}`;
+      } else {
+        div.className = 'fail';
+        div.textContent = `[FAIL] ${message}`;
+      }
+      resultsEl.appendChild(div);
+    }
+
+    async function runTests() {
+      try {
+        await initDB();
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+        await clear(STORES.SETTINGS);
+
+        const today = getLocalDateString(new Date());
+        const dMinus1 = offsetDateString(today, -1);
+        const dMinus2 = offsetDateString(today, -2);
+        const dMinus3 = offsetDateString(today, -3);
+        const dMinus4 = offsetDateString(today, -4);
+        const dMinus6 = offsetDateString(today, -6);
+
+        // Test 1: Empty streak calculation
+        const emptyStreak = calculateStreaks([]);
+        assert(emptyStreak.currentStreak === 0 && emptyStreak.longestStreak === 0, 'calculateStreaks returns 0/0 when sessions list is empty');
+
+        // Test 2: Consecutive streak including today (today, d-1, d-2 = 3 days)
+        const streakSessions1 = [
+          { date: today, duration: 3600 },
+          { date: dMinus1, duration: 1800 },
+          { date: dMinus2, duration: 2400 }
+        ];
+        const s1 = calculateStreaks(streakSessions1);
+        assert(s1.currentStreak === 3, 'Consecutive study on today, yesterday, and 2 days ago gives currentStreak = 3');
+        assert(s1.longestStreak === 3, 'longestStreak matches 3');
+
+        // Test 3: Maintained streak from yesterday (haven\'t studied today yet)
+        const streakSessions2 = [
+          { date: dMinus1, duration: 3600 },
+          { date: dMinus2, duration: 1800 }
+        ];
+        const s2 = calculateStreaks(streakSessions2);
+        assert(s2.currentStreak === 2, 'Studying yesterday and 2 days ago maintains currentStreak = 2 even if not studied today yet');
+
+        // Test 4: Historical streak gap (Longest streak was 3, but gap caused current streak = 1)
+        const streakSessions3 = [
+          { date: today, duration: 3600 },
+          // gap on d-1
+          { date: dMinus2, duration: 3600 },
+          { date: dMinus3, duration: 3600 },
+          { date: dMinus4, duration: 3600 }
+        ];
+        const s3 = calculateStreaks(streakSessions3);
+        assert(s3.currentStreak === 1, 'Current streak is 1 after a day gap');
+        assert(s3.longestStreak === 3, 'Longest streak remembers all-time best of 3 consecutive days');
+
+        // Test 5: Setup Real DB Data for Dashboard Metrics
+        const subA = await createSubject({ name: 'ASP.NET Core', color: '#6366f1' });
+        const subB = await createSubject({ name: 'System Design', color: '#10b981' });
+
+        // Save sessions today: 1h 40m (6000s) on SubA, 50m (3000s) on SubB = 9000s total today (2h 30m)
+        await saveSession({
+          subjectId: subA.id,
+          topic: 'JWT Auth',
+          duration: 6000,
+          date: today,
+          startTime: `${today}T10:00:00.000Z`,
+          endTime: `${today}T11:40:00.000Z`
+        });
+
+        await saveSession({
+          subjectId: subB.id,
+          topic: 'Load Balancing',
+          duration: 3000,
+          date: today,
+          startTime: `${today}T14:00:00.000Z`,
+          endTime: `${today}T14:50:00.000Z`
+        });
+
+        // Save session on d-1 (3600s)
+        await saveSession({
+          subjectId: subA.id,
+          topic: 'EF Core',
+          duration: 3600,
+          date: dMinus1,
+          startTime: `${dMinus1}T10:00:00.000Z`,
+          endTime: `${dMinus1}T11:00:00.000Z`
+        });
+
+        // Save session on d-6 (5400s)
+        await saveSession({
+          subjectId: subB.id,
+          topic: 'Database Sharding',
+          duration: 5400,
+          date: dMinus6,
+          startTime: `${dMinus6}T15:00:00.000Z`,
+          endTime: `${dMinus6}T16:30:00.000Z`
+        });
+
+        // Configure daily goal to 3 hours (10800s)
+        await put(STORES.SETTINGS, {
+          id: 'app_settings',
+          dailyGoalSeconds: 10800,
+          theme: 'light',
+          schemaVersion: 1
+        });
+
+        const dashData = await getDashboardData();
+
+        // Test 6: Today's duration & sessions count
+        assert(dashData.todaySeconds === 9000, `Today's total study seconds calculated correctly (9000s = 2h 30m, got ${dashData.todaySeconds})`);
+        assert(dashData.todaySessionCount === 2, `Today's session count is 2 (got ${dashData.todaySessionCount})`);
+
+        // Test 7: Goal progress
+        assert(dashData.dailyGoalSeconds === 10800, 'Daily goal seconds is 10800 (3h)');
+        // 9000 / 10800 = 83.33% -> 83%
+        assert(dashData.goalPercent === 83, `Goal completion is 83% (got ${dashData.goalPercent}%)`);
+        assert(dashData.isGoalMet === false, 'isGoalMet is false when under target');
+
+        // Test 8: Streaks in real data
+        assert(dashData.currentStreak === 2, `Current streak calculated as 2 days (today and yesterday, got ${dashData.currentStreak})`);
+
+        // Test 9: 7-Day total & average
+        // 9000 (today) + 3600 (d-1) + 5400 (d-6) = 18000 seconds total in past 7 days
+        assert(dashData.past7TotalSec === 18000, `Past 7 days total is 18000s (5h, got ${dashData.past7TotalSec})`);
+        // 18000 / 7 = 2571
+        assert(dashData.past7DailyAvgSec === 2571, `Past 7 days daily average is 2571s (~42m, got ${dashData.past7DailyAvgSec})`);
+
+        // Test 10: Today's Subject Breakdown
+        assert(dashData.todaySubjectBreakdown.length === 2, `Subject breakdown contains 2 subjects studied today`);
+        const firstBreakdown = dashData.todaySubjectBreakdown[0];
+        assert(firstBreakdown.name === 'ASP.NET Core' && firstBreakdown.totalSeconds === 6000, 'Breakdown sorted with top subject first (ASP.NET Core: 6000s)');
+        // 6000 / 9000 = 66.6% -> 67%
+        assert(firstBreakdown.percent === 67, `Top subject percentage is 67% (got ${firstBreakdown.percent}%)`);
+
+        // Clean up
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+        await clear(STORES.SETTINGS);
+
+        const summary = document.createElement('div');
+        summary.className = 'summary';
+        const msg = passedTests === totalTests
+          ? `ALL TESTS PASSED (${passedTests}/${totalTests})! PHASE 6 DASHBOARD READY.`
+          : `TESTS FAILED (${passedTests}/${totalTests})`;
+        summary.innerHTML = `<strong class="${passedTests === totalTests ? 'pass' : 'fail'}">${msg}</strong>`;
+        resultsEl.appendChild(summary);
+
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: passedTests === totalTests, total: totalTests, passedTests, msg })
+          });
+        } catch (_) {}
+      } catch (err) {
+        const div = document.createElement('div');
+        div.className = 'fail';
+        div.textContent = `Fatal test error: ${err.message}\n${err.stack}`;
+        resultsEl.appendChild(div);
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: false, error: err.message })
+          });
+        } catch (_) {}
+      }
+    }
+
+    runTests();
+  </script>
+</body>
+</html>

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Phase 8 Export/Import Tests — StudyTracker</title>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #f8fafc; padding: 20px; line-height: 1.5; }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; font-weight: bold; }
+    .summary { margin-top: 20px; padding: 10px; border-top: 1px solid #334155; font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+  <h1>StudyTracker Phase 8 — Export & Import Verification</h1>
+  <div id="results"></div>
+
+  <script type="module">
+    import { initDB, clear, getAll, STORES } from './js/db/database.js';
+    import { createSubject } from './js/services/subjectService.js';
+    import { saveSession } from './js/services/studyService.js';
+    import { validateBackupData, importBackup } from './js/services/backupService.js';
+
+    const resultsEl = document.getElementById('results');
+    let totalTests = 0;
+    let passedTests = 0;
+
+    function assert(condition, message) {
+      totalTests++;
+      const div = document.createElement('div');
+      if (condition) {
+        passedTests++;
+        div.className = 'pass';
+        div.textContent = `[PASS] ${message}`;
+      } else {
+        div.className = 'fail';
+        div.textContent = `[FAIL] ${message}`;
+      }
+      resultsEl.appendChild(div);
+    }
+
+    async function runTests() {
+      try {
+        await initDB();
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+
+        // Test 1: Validation of Valid Backup Data
+        const validBackup = {
+          appName: 'StudyTracker',
+          schemaVersion: 1,
+          exportedAt: '2026-10-08T12:00:00.000Z',
+          subjects: [
+            { id: 'sub_1', name: 'Computer Architecture', color: '#6366f1', archived: false }
+          ],
+          studySessions: [
+            {
+              id: 'sess_1',
+              subjectId: 'sub_1',
+              topic: 'Pipelining & Hazards',
+              duration: 3600,
+              date: '2026-10-08',
+              startTime: '2026-10-08T10:00:00.000Z',
+              endTime: '2026-10-08T11:00:00.000Z',
+              notes: 'Branch prediction units'
+            }
+          ],
+          settings: { dailyGoalSeconds: 14400, theme: 'dark' }
+        };
+
+        const valRes1 = validateBackupData(validBackup);
+        assert(valRes1.valid === true, 'validateBackupData accepts valid backup schema');
+        assert(valRes1.summary.subjectsCount === 1, 'Summary reports 1 subject');
+        assert(valRes1.summary.sessionsCount === 1, 'Summary reports 1 session');
+
+        // Test 2: Validation of Corrupted / Missing schemaVersion
+        const badVersion = { ...validBackup, schemaVersion: 'invalid' };
+        const valRes2 = validateBackupData(badVersion);
+        assert(valRes2.valid === false, 'validateBackupData rejects invalid schemaVersion');
+
+        // Test 3: Validation of Malformed Duration in Sessions (string instead of canonical seconds)
+        const badDuration = {
+          ...validBackup,
+          studySessions: [{ ...validBackup.studySessions[0], duration: '1 hour 30 mins' }]
+        };
+        const valRes3 = validateBackupData(badDuration);
+        assert(valRes3.valid === false, 'validateBackupData rejects non-numeric or string duration');
+
+        // Test 4: Validation of Malformed Date (invalid calendar format)
+        const badDate = {
+          ...validBackup,
+          studySessions: [{ ...validBackup.studySessions[0], date: '10/08/2026' }]
+        };
+        const valRes4 = validateBackupData(badDate);
+        assert(valRes4.valid === false, 'validateBackupData rejects non-YYYY-MM-DD date format');
+
+        // Test 5: Merge Mode Import
+        // Step A: Seed existing DB with local records
+        const localSub = await createSubject({ name: 'Mathematics', color: '#f59e0b' });
+        const localSess = await saveSession({
+          subjectId: localSub.id,
+          topic: 'Calculus',
+          duration: 1800,
+          date: '2026-10-08',
+          startTime: '2026-10-08T08:00:00.000Z',
+          endTime: '2026-10-08T08:30:00.000Z'
+        });
+
+        // Step B: Import backup in 'merge' mode
+        const mergeResult = await importBackup({ cleanData: valRes1.cleanData, mode: 'merge' });
+        assert(mergeResult.importedSubjects === 1, 'Merge imported 1 subject');
+        assert(mergeResult.importedSessions === 1, 'Merge imported 1 session');
+
+        const subjectsAfterMerge = await getAll(STORES.SUBJECTS);
+        assert(subjectsAfterMerge.length === 2, 'Merge mode preserves existing subjects (total: 2 subjects)');
+        const sessionsAfterMerge = await getAll(STORES.SESSIONS);
+        assert(sessionsAfterMerge.length === 2, 'Merge mode preserves existing sessions (total: 2 sessions)');
+
+        // Test 6: Replace Mode Import
+        const replaceBackup = {
+          appName: 'StudyTracker',
+          schemaVersion: 1,
+          subjects: [
+            { id: 'sub_rep_1', name: 'Target Subject', color: '#10b981', archived: false }
+          ],
+          studySessions: [
+            {
+              id: 'sess_rep_1',
+              subjectId: 'sub_rep_1',
+              topic: 'Clean Target Topic',
+              duration: 7200,
+              date: '2026-10-08',
+              startTime: '2026-10-08T09:00:00.000Z',
+              endTime: '2026-10-08T11:00:00.000Z'
+            }
+          ]
+        };
+        const valResReplace = validateBackupData(replaceBackup);
+        assert(valResReplace.valid === true, 'Replace backup is valid');
+
+        await importBackup({ cleanData: valResReplace.cleanData, mode: 'replace' });
+
+        const subjectsAfterReplace = await getAll(STORES.SUBJECTS);
+        assert(subjectsAfterReplace.length === 1 && subjectsAfterReplace[0].name === 'Target Subject', 'Replace mode safely erased old subjects and restored exactly 1 backup subject');
+
+        const sessionsAfterReplace = await getAll(STORES.SESSIONS);
+        assert(sessionsAfterReplace.length === 1 && sessionsAfterReplace[0].topic === 'Clean Target Topic', 'Replace mode safely erased old sessions and restored exactly 1 backup session');
+
+        // Clean up
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+
+        const summary = document.createElement('div');
+        summary.className = 'summary';
+        const msg = passedTests === totalTests
+          ? `ALL TESTS PASSED (${passedTests}/${totalTests})! PHASE 8 EXPORT/IMPORT READY.`
+          : `TESTS FAILED (${passedTests}/${totalTests})`;
+        summary.innerHTML = `<strong class="${passedTests === totalTests ? 'pass' : 'fail'}">${msg}</strong>`;
+        resultsEl.appendChild(summary);
+
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: passedTests === totalTests, total: totalTests, passedTests, msg })
+          });
+        } catch (_) {}
+      } catch (err) {
+        const div = document.createElement('div');
+        div.className = 'fail';
+        div.textContent = `Fatal test error: ${err.message}\n${err.stack}`;
+        resultsEl.appendChild(div);
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: false, error: err.message })
+          });
+        } catch (_) {}
+      }
+    }
+
+    runTests();
+  </script>
+</body>
+</html>

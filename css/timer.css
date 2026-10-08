@@ -1,0 +1,191 @@
+/* ==========================================================================
+   Timer Page Styles
+   Clean, distraction-free, large touch-friendly timer controls.
+   ========================================================================== */
+
+.timer-layout {
+  max-width: 580px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.timer-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 2.25rem 1.75rem;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+@media (min-width: 640px) {
+  .timer-card {
+    padding: 3rem 2.5rem;
+  }
+}
+
+.timer-state-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.85rem;
+  border-radius: var(--radius-full);
+  font-size: 0.825rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 1.5rem;
+  background-color: var(--bg-surface-active);
+  color: var(--text-secondary);
+}
+
+.timer-state-badge.running {
+  background-color: var(--primary-light);
+  color: var(--primary);
+}
+
+.timer-display {
+  font-family: var(--font-mono);
+  font-size: 3.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.04em;
+  margin-bottom: 0.5rem;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+@media (min-width: 640px) {
+  .timer-display {
+    font-size: 4.75rem;
+  }
+}
+
+.timer-subject-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 2rem;
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+}
+
+.timer-controls {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.btn-timer-primary {
+  min-width: 160px;
+  height: 54px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  border-radius: var(--radius-full);
+}
+
+.btn-timer-stop {
+  background-color: var(--danger);
+  color: var(--text-inverse);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-timer-stop:hover {
+  background-color: var(--danger-hover);
+}
+
+/* Setup Form Before Starting */
+.timer-setup-box {
+  width: 100%;
+  text-align: left;
+  margin-bottom: 1.5rem;
+}
+
+.subject-select-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.subject-select-row select {
+  flex: 1;
+}
+
+/* Post-Session Completion Card */
+.session-complete-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 2rem;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.complete-header {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.complete-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background-color: var(--success-light);
+  color: var(--success);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.complete-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.complete-summary {
+  background-color: var(--bg-surface-hover);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.complete-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.complete-summary-label {
+  color: var(--text-secondary);
+}
+
+.complete-summary-val {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.complete-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}

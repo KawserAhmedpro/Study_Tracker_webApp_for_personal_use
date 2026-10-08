@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Phase 7 Statistics & Chart.js Tests — StudyTracker</title>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #f8fafc; padding: 20px; line-height: 1.5; }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; font-weight: bold; }
+    .summary { margin-top: 20px; padding: 10px; border-top: 1px solid #334155; font-size: 1.1rem; }
+  </style>
+  <script src="assets/lib/chart.umd.min.js"></script>
+</head>
+<body>
+  <h1>StudyTracker Phase 7 — Statistics & Chart.js Verification</h1>
+  <div id="results"></div>
+  <canvas id="testTrendCanvas" width="400" height="200" style="display:none;"></canvas>
+  <canvas id="testDistCanvas" width="400" height="200" style="display:none;"></canvas>
+
+  <script type="module">
+    import { initDB, clear, STORES } from './js/db/database.js';
+    import { getLocalDateString, offsetDateString } from './js/utils/dateUtils.js';
+    import { getPeriodStatistics } from './js/services/statisticsService.js';
+    import { createSubject } from './js/services/subjectService.js';
+    import { saveSession } from './js/services/studyService.js';
+
+    const resultsEl = document.getElementById('results');
+    let totalTests = 0;
+    let passedTests = 0;
+
+    function assert(condition, message) {
+      totalTests++;
+      const div = document.createElement('div');
+      if (condition) {
+        passedTests++;
+        div.className = 'pass';
+        div.textContent = `[PASS] ${message}`;
+      } else {
+        div.className = 'fail';
+        div.textContent = `[FAIL] ${message}`;
+      }
+      resultsEl.appendChild(div);
+    }
+
+    async function runTests() {
+      try {
+        await initDB();
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+
+        const today = getLocalDateString(new Date());
+        const dMinus2 = offsetDateString(today, -2);
+        const dMinus5 = offsetDateString(today, -5);
+        const dMinus15 = offsetDateString(today, -15);
+
+        // 1. Setup subjects
+        const sub1 = await createSubject({ name: 'Algorithms', color: '#3b82f6' });
+        const sub2 = await createSubject({ name: 'Databases', color: '#10b981' });
+
+        // 2. Setup sessions
+        // Today: 2 hours (7200s) on Algorithms
+        await saveSession({
+          subjectId: sub1.id,
+          topic: 'Dynamic Programming',
+          duration: 7200,
+          date: today,
+          startTime: `${today}T10:00:00.000Z`,
+          endTime: `${today}T12:00:00.000Z`
+        });
+
+        // 2 days ago: 1 hour (3600s) on Databases
+        await saveSession({
+          subjectId: sub2.id,
+          topic: 'SQL Indexing',
+          duration: 3600,
+          date: dMinus2,
+          startTime: `${dMinus2}T14:00:00.000Z`,
+          endTime: `${dMinus2}T15:00:00.000Z`
+        });
+
+        // 5 days ago: 30 mins (1800s) on Algorithms
+        await saveSession({
+          subjectId: sub1.id,
+          topic: 'Graph BFS',
+          duration: 1800,
+          date: dMinus5,
+          startTime: `${dMinus5}T16:00:00.000Z`,
+          endTime: `${dMinus5}T16:30:00.000Z`
+        });
+
+        // 15 days ago: 1.5 hours (5400s) on Databases
+        await saveSession({
+          subjectId: sub2.id,
+          topic: 'Transactions & ACID',
+          duration: 5400,
+          date: dMinus15,
+          startTime: `${dMinus15}T09:00:00.000Z`,
+          endTime: `${dMinus15}T10:30:00.000Z`
+        });
+
+        // Test 1: 7-Day Statistics
+        const stats7 = await getPeriodStatistics(7);
+        assert(stats7.days === 7, '7-day stats returned');
+        assert(stats7.trend.dates.length === 7, '7-day trend contains exactly 7 chronological dates');
+        assert(stats7.trend.dataMinutes.length === 7, '7-day trend contains exactly 7 data points');
+
+        // Test 2: Zero-fill verification for 7 days
+        // In past 7 days, study occurred on today, d-2, and d-5 (3 active days, 4 zero-study days)
+        const zeroStudyDays7 = stats7.trend.dataMinutes.filter(m => m === 0);
+        assert(zeroStudyDays7.length === 4, `Zero-study days are preserved as 0 (expected 4 zero days, got ${zeroStudyDays7.length})`);
+        assert(stats7.activeDaysCount === 3, `Active days count in 7-day period is 3 (got ${stats7.activeDaysCount})`);
+
+        // Test 3: Total & Average in 7-day period
+        // 7200 + 3600 + 1800 = 12600s (210 mins)
+        assert(stats7.periodTotalSec === 12600, `7-day total seconds is 12600 (got ${stats7.periodTotalSec})`);
+        assert(stats7.dailyAverageSec === Math.round(12600 / 7), `7-day daily average is correct (${stats7.dailyAverageSec}s)`);
+
+        // Test 4: Subject distribution in 7-day period
+        assert(stats7.distribution.items.length === 2, 'Subject distribution includes both studied subjects');
+        const topSub = stats7.distribution.items[0];
+        assert(topSub.name === 'Algorithms' && topSub.totalSeconds === 9000, 'Algorithms has 9000s in 7-day period');
+
+        // Test 5: 30-Day Statistics
+        const stats30 = await getPeriodStatistics(30);
+        assert(stats30.days === 30, '30-day stats returned');
+        assert(stats30.trend.dates.length === 30, '30-day trend contains exactly 30 chronological dates');
+        assert(stats30.trend.dataMinutes.length === 30, '30-day trend contains exactly 30 data points');
+        // Total includes 15 days ago: 12600 + 5400 = 18000s (300 mins)
+        assert(stats30.periodTotalSec === 18000, `30-day total seconds is 18000 (got ${stats30.periodTotalSec})`);
+        assert(stats30.activeDaysCount === 4, `Active days count in 30-day period is 4 (got ${stats30.activeDaysCount})`);
+
+        // Test 6: Chart.js Line Chart creation and lifecycle
+        assert(typeof window.Chart === 'function', 'Chart.js is loaded from local bundle');
+        const trendCanvas = document.getElementById('testTrendCanvas');
+        const trendChart = new window.Chart(trendCanvas.getContext('2d'), {
+          type: 'line',
+          data: {
+            labels: stats7.trend.labels,
+            datasets: [{ data: stats7.trend.dataMinutes }]
+          }
+        });
+        assert(trendChart !== null && trendChart.id !== undefined, 'Chart.js line chart created successfully');
+        trendChart.destroy();
+
+        // Test 7: Chart.js Doughnut Chart creation and lifecycle
+        const distCanvas = document.getElementById('testDistCanvas');
+        const distChart = new window.Chart(distCanvas.getContext('2d'), {
+          type: 'doughnut',
+          data: {
+            labels: stats7.distribution.labels,
+            datasets: [{ data: stats7.distribution.dataMinutes }]
+          }
+        });
+        assert(distChart !== null && distChart.id !== undefined, 'Chart.js doughnut chart created successfully');
+        distChart.destroy();
+
+        // Clean up
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+
+        const summary = document.createElement('div');
+        summary.className = 'summary';
+        const msg = passedTests === totalTests
+          ? `ALL TESTS PASSED (${passedTests}/${totalTests})! PHASE 7 STATISTICS READY.`
+          : `TESTS FAILED (${passedTests}/${totalTests})`;
+        summary.innerHTML = `<strong class="${passedTests === totalTests ? 'pass' : 'fail'}">${msg}</strong>`;
+        resultsEl.appendChild(summary);
+
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: passedTests === totalTests, total: totalTests, passedTests, msg })
+          });
+        } catch (_) {}
+      } catch (err) {
+        const div = document.createElement('div');
+        div.className = 'fail';
+        div.textContent = `Fatal test error: ${err.message}\n${err.stack}`;
+        resultsEl.appendChild(div);
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: false, error: err.message })
+          });
+        } catch (_) {}
+      }
+    }
+
+    runTests();
+  </script>
+</body>
+</html>

@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Phase 10 Comprehensive End-to-End Verification — StudyTracker</title>
+  <style>
+    body { font-family: monospace; background: #0b0f19; color: #f8fafc; padding: 24px; line-height: 1.6; }
+    h1 { color: #60a5fa; margin-bottom: 8px; }
+    h2 { color: #94a3b8; font-size: 1.05rem; margin-top: 20px; border-bottom: 1px solid #1e293b; padding-bottom: 4px; }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; font-weight: bold; }
+    .summary { margin-top: 24px; padding: 14px; border-radius: 8px; background: #1e293b; font-size: 1.15rem; }
+    #canvas-box { position: absolute; left: -9999px; width: 400px; height: 300px; }
+  </style>
+  <script src="./assets/lib/chart.umd.min.js"></script>
+</head>
+<body>
+  <h1>StudyTracker Phase 10 — Full System End-to-End Verification</h1>
+  <p>Verifying Database, Subjects, Timer, Sessions, Dashboard, History, Stats/Charts, Backup/Restore, PWA, and UI Views.</p>
+  <div id="results"></div>
+  <div id="canvas-box">
+    <canvas id="test-line-chart"></canvas>
+    <canvas id="test-doughnut-chart"></canvas>
+  </div>
+
+  <script type="module">
+    import { initDB, clear, get, getAll, STORES } from './js/db/database.js';
+    import {
+      createSubject,
+      getAllSubjects,
+      getSubjectById,
+      updateSubject,
+      deleteSubject,
+      restoreSubject
+    } from './js/services/subjectService.js';
+    import {
+      saveSession,
+      getAllSessions,
+      getSessionById,
+      updateSession,
+      deleteSession
+    } from './js/services/studyService.js';
+    import { timerService } from './js/services/timerService.js';
+    import {
+      getDashboardData,
+      getPeriodStatistics,
+      calculateStreaks
+    } from './js/services/statisticsService.js';
+    import {
+      validateBackupData,
+      importBackup
+    } from './js/services/backupService.js';
+    import { getLocalDateString, offsetDateString } from './js/utils/dateUtils.js';
+
+    import { renderDashboard } from './js/pages/dashboard.js';
+    import { renderTimer } from './js/pages/timer.js';
+    import { renderHistory } from './js/pages/history.js';
+    import { renderStatistics } from './js/pages/statistics.js';
+    import { renderSettings } from './js/pages/settings.js';
+
+    const resultsEl = document.getElementById('results');
+    let totalTests = 0;
+    let passedTests = 0;
+    const failedTestsList = [];
+
+    function addSection(title) {
+      const h = document.createElement('h2');
+      h.textContent = title;
+      resultsEl.appendChild(h);
+    }
+
+    function assert(condition, message) {
+      totalTests++;
+      const div = document.createElement('div');
+      if (condition) {
+        passedTests++;
+        div.className = 'pass';
+        div.textContent = `[PASS] ${message}`;
+      } else {
+        div.className = 'fail';
+        div.textContent = `[FAIL] ${message}`;
+        failedTestsList.push(message);
+      }
+      resultsEl.appendChild(div);
+    }
+
+    async function runE2E() {
+      try {
+        // ==========================================
+        // 1. Database & Schema Initialization
+        // ==========================================
+        addSection('1. Local Database & Schema Verification');
+        const db = await initDB();
+        assert(db !== null && db.name === 'studytracker_db', 'IndexedDB "studytracker_db" initialized');
+        assert(db.objectStoreNames.contains(STORES.SUBJECTS), 'Store STORES.SUBJECTS exists');
+        assert(db.objectStoreNames.contains(STORES.SESSIONS), 'Store STORES.SESSIONS exists');
+        assert(db.objectStoreNames.contains(STORES.SETTINGS), 'Store STORES.SETTINGS exists');
+        assert(db.objectStoreNames.contains(STORES.ACTIVE_SESSION), 'Store STORES.ACTIVE_SESSION exists');
+
+        // Clean test environment
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+        await clear(STORES.ACTIVE_SESSION);
+
+        // ==========================================
+        // 2. Subject Service CRUD & Safe Archiving
+        // ==========================================
+        addSection('2. Subject Management & Safe Archiving');
+        const testSub = await createSubject({
+          name: 'Quantum Physics',
+          color: '#3b82f6'
+        });
+        assert(testSub && testSub.id && testSub.name === 'Quantum Physics', 'Subject created successfully with ID and name');
+
+        const fetchedSub = await getSubjectById(testSub.id);
+        assert(fetchedSub && fetchedSub.name === 'Quantum Physics', 'Subject retrieved by ID');
+
+        await updateSubject(testSub.id, { name: 'Advanced Quantum Physics' });
+        const updatedSub = await getSubjectById(testSub.id);
+        assert(updatedSub.name === 'Advanced Quantum Physics', 'Subject updated successfully');
+
+        // Create a study session for this subject
+        const today = getLocalDateString(new Date());
+        const createdSession = await saveSession({
+          subjectId: testSub.id,
+          duration: 3600, // exactly 1 hour in integer seconds
+          startTime: new Date(Date.now() - 3600000).toISOString(),
+          endTime: new Date().toISOString(),
+          date: today,
+          topic: 'Schrodinger Wave Equation',
+          notes: 'Derived time-dependent form'
+        });
+        assert(createdSession && createdSession.id && createdSession.duration === 3600, 'Study session created with integer seconds');
+
+        // Attempting to delete subject with sessions must archive it safely, not hard-delete
+        const deleteRes = await deleteSubject(testSub.id);
+        assert(deleteRes.action === 'archived', 'Subject with historical sessions was safely archived (prevent data loss)');
+
+        const subAfterArchive = await getSubjectById(testSub.id);
+        assert(subAfterArchive.archived === true, 'Subject flag archived is true');
+
+        // Unarchive back
+        await restoreSubject(testSub.id);
+        const restoredSub = await getSubjectById(testSub.id);
+        assert(restoredSub.archived === false, 'Subject restored successfully');
+
+        // ==========================================
+        // 3. Timer & Persistence / Active Session
+        // ==========================================
+        addSection('3. Timer Engine & Session Persistence');
+        await timerService.init();
+        await timerService.start({ subjectId: testSub.id, topic: 'Quantum States' });
+        assert(timerService.status === 'running', 'Timer started and status is "running"');
+        assert(timerService.subjectId === testSub.id, 'Timer bound to subject ID');
+
+        // Verify activeSession written to IndexedDB
+        const activeDb = await get(STORES.ACTIVE_SESSION, 'current');
+        assert(activeDb !== null && activeDb.subjectId === testSub.id, 'Active session persisted to IndexedDB store');
+        assert(typeof activeDb.startTime === 'number' && activeDb.startTime > 0, 'Active session tracks exact start timestamp');
+
+        // Stop session (transitions to completed state)
+        timerService.stop();
+        assert(timerService.status === 'completed', 'Timer stopped and entered completed review state');
+
+        // Discard session
+        await timerService.discardCompletedSession();
+        assert(timerService.status === 'idle', 'Timer discarded and reset to idle');
+        const activeAfterReset = await get(STORES.ACTIVE_SESSION, 'current');
+        assert(activeAfterReset === null || activeAfterReset === undefined, 'Active session cleared from IndexedDB after discard');
+
+        // ==========================================
+        // 4. Study History & Queries
+        // ==========================================
+        addSection('4. Study History & Queries');
+        // Create second session on yesterday
+        const yesterday = offsetDateString(today, -1);
+        const session2 = await saveSession({
+          subjectId: testSub.id,
+          duration: 1800, // 30 min
+          startTime: new Date(Date.now() - 86400000 - 1800000).toISOString(),
+          endTime: new Date(Date.now() - 86400000).toISOString(),
+          date: yesterday,
+          topic: 'Matrix Mechanics',
+          notes: 'Heisenberg representation'
+        });
+        assert(session2 && session2.id, 'Second session created for yesterday');
+
+        const allSessions = await getAllSessions();
+        assert(allSessions.length === 2, 'getAllSessions returns all historical sessions');
+
+        // Search filter
+        const searchMatches = allSessions.filter(s => (s.notes || '').toLowerCase().includes('heisenberg'));
+        assert(searchMatches.length === 1 && searchMatches[0].id === session2.id, 'Session search by note keyword matches');
+
+        // Subject filter
+        const subMatches = allSessions.filter(s => s.subjectId === testSub.id);
+        assert(subMatches.length === 2, 'Filter by subjectId returns all matching sessions');
+
+        // Update session
+        await updateSession(session2.id, { notes: 'Updated Heisenberg notes' });
+        const updatedS2 = await getSessionById(session2.id);
+        assert(updatedS2.notes === 'Updated Heisenberg notes', 'Session notes updated successfully');
+
+        // ==========================================
+        // 5. Dashboard Calculations & Streaks
+        // ==========================================
+        addSection('5. Dashboard Metrics & Streak Calculation');
+        const dashData = await getDashboardData();
+        assert(dashData.todaySeconds === 3600, `Today total seconds calculated correctly (expected 3600, got ${dashData.todaySeconds})`);
+        assert(dashData.currentStreak >= 1, `Current streak calculated (got ${dashData.currentStreak})`);
+        assert(dashData.longestStreak >= 1, `Longest streak calculated (got ${dashData.longestStreak})`);
+        assert(dashData.past7DailyAvgSec > 0, '7-day daily average calculated');
+        assert(Array.isArray(dashData.todaySubjectBreakdown) && dashData.todaySubjectBreakdown.length > 0, 'Subject breakdown contains data');
+
+        const physicsBreakdown = dashData.todaySubjectBreakdown.find(b => b.subjectId === testSub.id);
+        assert(physicsBreakdown && physicsBreakdown.totalSeconds >= 3600, 'Subject breakdown includes correct study time for subject');
+
+        // ==========================================
+        // 6. Statistics Period & Chart.js Rendering
+        // ==========================================
+        addSection('6. Statistics Analytics & Chart.js Rendering');
+        const stats7 = await getPeriodStatistics(7);
+        assert(stats7.periodTotalSec === 5400, `7-day total study time includes both sessions (expected 5400, got ${stats7.periodTotalSec})`);
+        assert(stats7.trend.dates.length === 7, '7-day trend contains exactly 7 daily entries (zero-filled)');
+
+        const restDays = stats7.trend.dataSeconds.filter(s => s === 0);
+        assert(restDays.length >= 1, 'Rest days are properly zero-filled (not skipped or omitted)');
+
+        const stats30 = await getPeriodStatistics(30);
+        assert(stats30.trend.dates.length === 30, '30-day trend contains exactly 30 daily entries (zero-filled)');
+
+        // Verify Chart.js can render line chart
+        const lineCanvas = document.getElementById('test-line-chart');
+        const lineChart = new Chart(lineCanvas, {
+          type: 'line',
+          data: {
+            labels: stats7.trend.labels,
+            datasets: [{
+              label: 'Minutes Studied',
+              data: stats7.trend.dataMinutes,
+              borderColor: '#3b82f6'
+            }]
+          },
+          options: { responsive: false }
+        });
+        assert(lineChart !== null && typeof lineChart.destroy === 'function', 'Chart.js Line chart initialized and rendered');
+        lineChart.destroy();
+
+        // Verify Chart.js can render doughnut chart
+        const doughnutCanvas = document.getElementById('test-doughnut-chart');
+        const doughnutChart = new Chart(doughnutCanvas, {
+          type: 'doughnut',
+          data: {
+            labels: stats7.distribution.labels,
+            datasets: [{
+              data: stats7.distribution.dataSeconds,
+              backgroundColor: stats7.distribution.colors
+            }]
+          },
+          options: { responsive: false }
+        });
+        assert(doughnutChart !== null && typeof doughnutChart.destroy === 'function', 'Chart.js Doughnut chart initialized and rendered');
+        doughnutChart.destroy();
+
+        // ==========================================
+        // 7. Backup & Restore (JSON Export & Import)
+        // ==========================================
+        addSection('7. Backup Export & Safe Restore');
+        const allSubs = await getAll(STORES.SUBJECTS);
+        const allSess = await getAll(STORES.SESSIONS);
+        const mockBackupData = {
+          appName: 'StudyTracker',
+          schemaVersion: 1,
+          exportedAt: new Date().toISOString(),
+          subjects: allSubs,
+          studySessions: allSess,
+          settings: { dailyGoalMinutes: 120, theme: 'light', soundEnabled: true }
+        };
+
+        const validateResult = validateBackupData(mockBackupData);
+        assert(validateResult.valid === true, 'Backup JSON passes schema validation');
+
+        // Test Merge Import
+        const mergeResult = await importBackup({ cleanData: validateResult.cleanData, mode: 'merge' });
+        assert(mergeResult && typeof mergeResult.importedSubjects === 'number', 'Backup import in "merge" mode succeeded');
+
+        // ==========================================
+        // 8. PWA, Manifest & Offline Assets
+        // ==========================================
+        addSection('8. PWA Manifest & Offline Assets');
+        const manifestRes = await fetch('./manifest.json');
+        assert(manifestRes.ok, 'manifest.json fetched (200 OK)');
+        const manifest = await manifestRes.json();
+        assert(manifest.short_name === 'StudyTracker', 'PWA manifest defines valid app name');
+
+        const icon192 = await fetch('./assets/icons/icon-192.png');
+        assert(icon192.ok, 'PWA icon-192.png exists and loaded (200 OK)');
+
+        const icon512 = await fetch('./assets/icons/icon-512.png');
+        assert(icon512.ok, 'PWA icon-512.png exists and loaded (200 OK)');
+
+        // ==========================================
+        // 9. UI View Rendering & Theme
+        // ==========================================
+        addSection('9. UI View Rendering & Theme');
+        const dashboardHtml = renderDashboard();
+        assert(dashboardHtml.includes('metric-card') && dashboardHtml.includes('Daily Goal'), 'renderDashboard() generates hero metrics & cards');
+
+        const timerHtml = renderTimer();
+        assert(timerHtml.includes('timer-card') && timerHtml.includes('btn-timer-start'), 'renderTimer() generates distraction-free timer layout');
+
+        const historyHtml = renderHistory();
+        assert(historyHtml.includes('history-filter-bar') && historyHtml.includes('history-groups'), 'renderHistory() generates filter bar & groups');
+
+        const statsHtml = renderStatistics();
+        assert(statsHtml.includes('stats-period-toggle') && statsHtml.includes('charts-grid'), 'renderStatistics() generates charts layout');
+
+        const settingsHtml = renderSettings();
+        assert(settingsHtml.includes('settings-grid') && settingsHtml.includes('btn-export-backup'), 'renderSettings() generates settings & backup controls');
+
+        // Theme switching test
+        document.documentElement.setAttribute('data-theme', 'dark');
+        assert(document.documentElement.getAttribute('data-theme') === 'dark', 'Theme switched to dark mode');
+        document.documentElement.setAttribute('data-theme', 'light');
+        assert(document.documentElement.getAttribute('data-theme') === 'light', 'Theme switched back to light mode');
+
+        // ==========================================
+        // Final Summary
+        // ==========================================
+        const summary = document.createElement('div');
+        summary.className = 'summary';
+        const isSuccess = passedTests === totalTests;
+        const msg = isSuccess
+          ? `🎉 ALL END-TO-END TESTS PASSED (${passedTests}/${totalTests})! STUDYTRACKER IS PRODUCTION READY.`
+          : `❌ TESTS FAILED: ${passedTests} passed out of ${totalTests}.`;
+        summary.innerHTML = `<strong class="${isSuccess ? 'pass' : 'fail'}">${msg}</strong>`;
+        resultsEl.appendChild(summary);
+
+        console.log(`[E2E_RESULT] ${passedTests}/${totalTests} passed`);
+        try {
+          await fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: isSuccess, total: totalTests, passedTests, msg, failures: failedTestsList })
+          });
+        } catch (_) {}
+      } catch (err) {
+        const div = document.createElement('div');
+        div.className = 'fail';
+        div.textContent = `FATAL ERROR: ${err.message}\n${err.stack}`;
+        resultsEl.appendChild(div);
+        console.error('[E2E_ERROR]', err);
+        try {
+          await fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: false, error: err.message, stack: err.stack })
+          });
+        } catch (_) {}
+      }
+    }
+
+    runE2E();
+  </script>
+</body>
+</html>

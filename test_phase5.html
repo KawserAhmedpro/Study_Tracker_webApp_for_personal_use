@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Phase 5 Study History Tests — StudyTracker</title>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #f8fafc; padding: 20px; line-height: 1.5; }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; font-weight: bold; }
+    .summary { margin-top: 20px; padding: 10px; border-top: 1px solid #334155; font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+  <h1>StudyTracker Phase 5 — Study History Verification</h1>
+  <div id="results"></div>
+
+  <script type="module">
+    import { initDB, clear, get, STORES } from './js/db/database.js';
+    import { createSubject, getAllSubjects } from './js/services/subjectService.js';
+    import { saveSession, getAllSessions, getSessionById, updateSession, deleteSession } from './js/services/studyService.js';
+
+    const resultsEl = document.getElementById('results');
+    let totalTests = 0;
+    let passedTests = 0;
+
+    function assert(condition, message) {
+      totalTests++;
+      const div = document.createElement('div');
+      if (condition) {
+        passedTests++;
+        div.className = 'pass';
+        div.textContent = `[PASS] ${message}`;
+      } else {
+        div.className = 'fail';
+        div.textContent = `[FAIL] ${message}`;
+      }
+      resultsEl.appendChild(div);
+    }
+
+    async function runTests() {
+      try {
+        await initDB();
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+
+        // 1. Setup subjects
+        const sub1 = await createSubject({ name: 'ASP.NET Core', color: '#6366f1' });
+        const sub2 = await createSubject({ name: 'C++', color: '#10b981' });
+
+        // 2. Setup sessions across different dates
+        const sess1 = await saveSession({
+          subjectId: sub1.id,
+          topic: 'JWT Authentication',
+          duration: 5040, // 1h 24m
+          date: '2026-10-08',
+          startTime: '2026-10-08T10:30:00.000Z',
+          endTime: '2026-10-08T11:54:00.000Z',
+          notes: 'Configured token validation parameters'
+        });
+
+        const sess2 = await saveSession({
+          subjectId: sub2.id,
+          topic: 'Binary Search Trees',
+          duration: 3300, // 55m
+          date: '2026-10-08',
+          startTime: '2026-10-08T14:00:00.000Z',
+          endTime: '2026-10-08T14:55:00.000Z',
+          notes: 'Balanced tree rotation logic'
+        });
+
+        const sess3 = await saveSession({
+          subjectId: sub1.id,
+          topic: 'Entity Framework Core',
+          duration: 7200, // 2h
+          date: '2026-10-07',
+          startTime: '2026-10-07T09:00:00.000Z',
+          endTime: '2026-10-07T11:00:00.000Z',
+          notes: 'Migration optimization and indexing'
+        });
+
+        // Test 1: Session Retrieval & Ordering
+        const all = await getAllSessions();
+        assert(all.length === 3, 'getAllSessions returns all 3 sessions');
+        assert(new Date(all[0].startTime).getTime() >= new Date(all[1].startTime).getTime(), 'Sessions are sorted by startTime descending');
+
+        // Test 2: Date Grouping
+        const datesMap = new Map();
+        for (const s of all) {
+          if (!datesMap.has(s.date)) datesMap.set(s.date, []);
+          datesMap.get(s.date).push(s);
+        }
+        assert(datesMap.has('2026-10-08') && datesMap.get('2026-10-08').length === 2, 'Date 2026-10-08 contains 2 grouped sessions');
+        assert(datesMap.has('2026-10-07') && datesMap.get('2026-10-07').length === 1, 'Date 2026-10-07 contains 1 grouped session');
+
+        // Test 3: Search Filter by topic
+        const searchJwt = all.filter(s => (s.topic || '').toLowerCase().includes('jwt'));
+        assert(searchJwt.length === 1 && searchJwt[0].id === sess1.id, 'Search by topic "jwt" returns correct session');
+
+        // Test 4: Search Filter by notes
+        const searchNotes = all.filter(s => (s.notes || '').toLowerCase().includes('rotation'));
+        assert(searchNotes.length === 1 && searchNotes[0].id === sess2.id, 'Search by notes "rotation" returns correct session');
+
+        // Test 5: Subject Filter
+        const filterSub2 = all.filter(s => s.subjectId === sub2.id);
+        assert(filterSub2.length === 1 && filterSub2[0].topic === 'Binary Search Trees', 'Subject filter returns only sessions for selected subject');
+
+        // Test 6: Date Filter
+        const filterDate = all.filter(s => s.date === '2026-10-07');
+        assert(filterDate.length === 1 && filterDate[0].id === sess3.id, 'Date filter returns only sessions for 2026-10-07');
+
+        // Test 7: Edit / Update Session
+        const updatedSess = await updateSession(sess1.id, {
+          topic: 'JWT Auth & Refresh Tokens',
+          notes: 'Updated notes with refresh mechanism',
+          duration: 5400 // 1h 30m
+        });
+        assert(updatedSess.topic === 'JWT Auth & Refresh Tokens', 'Session topic updated successfully');
+        assert(updatedSess.duration === 5400, 'Session duration updated successfully');
+
+        const reFetch = await getSessionById(sess1.id);
+        assert(reFetch.topic === 'JWT Auth & Refresh Tokens', 'Updated session persisted in IndexedDB');
+
+        // Test 8: Delete Session
+        await deleteSession(sess2.id);
+        const checkDeleted = await getSessionById(sess2.id);
+        assert(checkDeleted === null, 'Deleted session permanently removed from IndexedDB');
+
+        const remaining = await getAllSessions();
+        assert(remaining.length === 2, 'Remaining session count is exactly 2');
+
+        // Clean up
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+
+        const summary = document.createElement('div');
+        summary.className = 'summary';
+        const msg = passedTests === totalTests
+          ? `ALL TESTS PASSED (${passedTests}/${totalTests})! PHASE 5 STUDY HISTORY READY.`
+          : `TESTS FAILED (${passedTests}/${totalTests})`;
+        summary.innerHTML = `<strong class="${passedTests === totalTests ? 'pass' : 'fail'}">${msg}</strong>`;
+        resultsEl.appendChild(summary);
+
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: passedTests === totalTests, total: totalTests, passedTests, msg })
+          });
+        } catch (_) {}
+      } catch (err) {
+        const div = document.createElement('div');
+        div.className = 'fail';
+        div.textContent = `Fatal test error: ${err.message}\n${err.stack}`;
+        resultsEl.appendChild(div);
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: false, error: err.message })
+          });
+        } catch (_) {}
+      }
+    }
+
+    runTests();
+  </script>
+</body>
+</html>

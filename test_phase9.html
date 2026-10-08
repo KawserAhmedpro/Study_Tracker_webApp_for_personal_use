@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Phase 9 PWA & Offline Tests — StudyTracker</title>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #f8fafc; padding: 20px; line-height: 1.5; }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; font-weight: bold; }
+    .summary { margin-top: 20px; padding: 10px; border-top: 1px solid #334155; font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+  <h1>StudyTracker Phase 9 — PWA & Offline Verification</h1>
+  <div id="results"></div>
+
+  <script type="module">
+    const resultsEl = document.getElementById('results');
+    let totalTests = 0;
+    let passedTests = 0;
+
+    function assert(condition, message) {
+      totalTests++;
+      const div = document.createElement('div');
+      if (condition) {
+        passedTests++;
+        div.className = 'pass';
+        div.textContent = `[PASS] ${message}`;
+      } else {
+        div.className = 'fail';
+        div.textContent = `[FAIL] ${message}`;
+      }
+      resultsEl.appendChild(div);
+    }
+
+    async function runTests() {
+      try {
+        // Test 1: Fetch and validate manifest.json
+        const manifestRes = await fetch('./manifest.json');
+        assert(manifestRes.ok, 'manifest.json fetched successfully (200 OK)');
+        const manifest = await manifestRes.json();
+        assert(manifest.name && manifest.short_name === 'StudyTracker', 'Manifest has valid app name and short_name');
+        assert(manifest.display === 'standalone', 'Manifest display mode is "standalone"');
+        assert(Array.isArray(manifest.icons) && manifest.icons.length >= 2, 'Manifest defines icons for multiple sizes');
+
+        // Test 2: Check icon files exist and load
+        const svgRes = await fetch('./assets/icons/icon.svg');
+        assert(svgRes.ok, 'assets/icons/icon.svg accessible (200 OK)');
+
+        const icon192Res = await fetch('./assets/icons/icon-192.png');
+        assert(icon192Res.ok, 'assets/icons/icon-192.png accessible (200 OK)');
+
+        const icon512Res = await fetch('./assets/icons/icon-512.png');
+        assert(icon512Res.ok, 'assets/icons/icon-512.png accessible (200 OK)');
+
+        // Test 3: Service Worker registration
+        assert('serviceWorker' in navigator, 'Browser environment supports Service Workers');
+        const reg = await navigator.serviceWorker.register('./sw.js');
+        assert(reg !== null && typeof reg.scope === 'string', 'sw.js registered successfully');
+
+        // Wait for installation / activation
+        const sw = reg.installing || reg.waiting || reg.active;
+        if (sw && sw.state !== 'activated') {
+          await new Promise((resolve) => {
+            sw.addEventListener('statechange', () => {
+              if (sw.state === 'activated') resolve();
+            });
+            setTimeout(resolve, 3500);
+          });
+        }
+
+        // Test 4: Cache storage verification
+        const hasCacheApi = 'caches' in window;
+        assert(hasCacheApi, 'CacheStorage API is supported');
+
+        // Poll for cache availability
+        let cacheFound = false;
+        for (let i = 0; i < 25; i++) {
+          const keys = await caches.keys();
+          if (keys.includes('studytracker-v1')) {
+            cacheFound = true;
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 200));
+        }
+        assert(cacheFound, 'Cache "studytracker-v1" opened by Service Worker');
+
+        const cache = await caches.open('studytracker-v1');
+        const cachedHtml = await cache.match('./index.html');
+        assert(cachedHtml !== undefined, 'Cache contains "./index.html"');
+
+        const cachedCss = await cache.match('./css/main.css');
+        assert(cachedCss !== undefined, 'Cache contains "./css/main.css"');
+
+        const cachedChart = await cache.match('./assets/lib/chart.umd.min.js');
+        assert(cachedChart !== undefined, 'Cache contains offline Chart.js library');
+
+        const summary = document.createElement('div');
+        summary.className = 'summary';
+        const msg = passedTests === totalTests
+          ? `ALL TESTS PASSED (${passedTests}/${totalTests})! PHASE 9 PWA & OFFLINE READY.`
+          : `TESTS FAILED (${passedTests}/${totalTests})`;
+        summary.innerHTML = `<strong class="${passedTests === totalTests ? 'pass' : 'fail'}">${msg}</strong>`;
+        resultsEl.appendChild(summary);
+
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: passedTests === totalTests, total: totalTests, passedTests, msg })
+          });
+        } catch (_) {}
+      } catch (err) {
+        const div = document.createElement('div');
+        div.className = 'fail';
+        div.textContent = `Fatal test error: ${err.message}\n${err.stack}`;
+        resultsEl.appendChild(div);
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: false, error: err.message })
+          });
+        } catch (_) {}
+      }
+    }
+
+    runTests();
+  </script>
+</body>
+</html>
