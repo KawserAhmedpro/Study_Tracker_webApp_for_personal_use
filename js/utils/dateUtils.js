@@ -42,6 +42,40 @@ export function formatDisplayDate(dateStr) {
 }
 
 /**
+ * Formats date into detailed readable string: "Monday, October 19, 2026"
+ * @param {string} dateStr - 'YYYY-MM-DD'
+ * @returns {string}
+ */
+export function formatFullDate(dateStr) {
+  if (!dateStr) return '';
+  const [year, month, day] = dateStr.split('-').map(Number);
+  if (!year || !month || !day) return dateStr;
+  const dateObj = new Date(year, month - 1, day);
+  return dateObj.toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+/**
+ * Returns weekday name for a date: e.g. "Mon" or "Monday"
+ * @param {string} dateStr - 'YYYY-MM-DD'
+ * @param {boolean} [short=false]
+ * @returns {string}
+ */
+export function formatWeekday(dateStr, short = false) {
+  if (!dateStr) return '';
+  const [year, month, day] = dateStr.split('-').map(Number);
+  if (!year || !month || !day) return '';
+  const dateObj = new Date(year, month - 1, day);
+  return dateObj.toLocaleDateString(undefined, {
+    weekday: short ? 'short' : 'long',
+  });
+}
+
+/**
  * Formats full timestamp into local time string: "10:30 AM"
  * @param {string|number|Date} dateInput
  * @returns {string}

@@ -6,7 +6,14 @@
 import { getAllSessions } from './studyService.js';
 import { getAllSubjects } from './subjectService.js';
 import { get, STORES, DEFAULT_SETTINGS } from '../db/database.js';
-import { getLocalDateString, offsetDateString, getPastNDays } from '../utils/dateUtils.js';
+import {
+  getLocalDateString,
+  offsetDateString,
+  getPastNDays,
+  formatDisplayDate,
+  formatFullDate,
+  formatWeekday
+} from '../utils/dateUtils.js';
 
 /**
  * Calculates current and longest study streak in days.
@@ -255,3 +262,160 @@ export async function getPeriodStatistics(days = 7) {
     }
   };
 }
+
+/**
+ * Calculates detailed statistics for a specific single calendar date (YYYY-MM-DD).
+ * Provides study duration, session breakdown, goal comparison, and individual session items.
+ * @param {string} [targetDateStr] - Target date in YYYY-MM-DD. Defaults to today.
+ * @returns {Promise<Object>}
+ */
+export async function getDayStatistics(targetDateStr) {
+  const dateStr = targetDateStr || getLocalDateString(new Date());
+
+  const [allSessions, subjects, settingsRecord] = await Promise.all([
+    getAllSessions(),
+    getAllSubjects({ includeArchived: true }),
+    get(STORES.SETTINGS, 'app_settings')
+  ]);
+
+  const settings = settingsRecord || DEFAULT_SETTINGS;
+  const subjectMap = new Map(subjects.map((s) => [s.id, s]));
+
+  // Find all sessions belonging to this local date (including midnight crosses)
+  const daySessions = allSessions.filter((s) => {
+    if (s.date === dateStr) return true;
+    if (s.startTime && s.endTime) {
+      const endD = getLocalDateString(new Date(s.endTime));
+      if (endD === dateStr) return true;
+    }
+    return false;
+  });
+
+  const totalSeconds = daySessions.reduce((acc, s) => acc + (s.duration || 0), 0);
+  const sessionCount = daySessions.length;
+  const dailyGoalSeconds = settings.dailyGoalSeconds || 14400;
+  const goalPercent = dailyGoalSeconds > 0 ? Math.min(999, Math.round((totalSeconds / dailyGoalSeconds) * 100)) : 0;
+  const isGoalMet = totalSeconds >= dailyGoalSeconds && dailyGoalSeconds > 0;
+
+  // Aggregate subjects for this single day
+  const subjectTotalMap = new Map();
+  for (const s of daySessions) {
+    const sid = s.subjectId;
+    subjectTotalMap.set(sid, (subjectTotalMap.get(sid) || 0) + (s.duration || 0));
+  }
+
+  const subjectBreakdown = Array.from(subjectTotalMap.entries())
+    .map(([sid, sec]) => {
+      const sub = subjectMap.get(sid) || { name: 'Unknown Subject', color: '#64748b' };
+      return {
+        subjectId: sid,
+        name: sub.name,
+        color: sub.color,
+        totalSeconds: sec,
+        percent: totalSeconds > 0 ? Math.round((sec / totalSeconds) * 100) : 0
+      };
+    })
+    .sort((a, b) => b.totalSeconds - a.totalSeconds);
+
+  // Enriched sessions with subject details and sorted by start time descending
+  const enrichedSessions = daySessions
+    .map((s) => ({
+      ...s,
+      subject: subjectMap.get(s.subjectId) || { name: 'Unknown Subject', color: '#64748b' }
+    }))
+    .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+
+  return {
+    date: dateStr,
+    displayDate: formatDisplayDate(dateStr),
+    fullDate: formatFullDate(dateStr),
+    weekday: formatWeekday(dateStr, false),
+    weekdayShort: formatWeekday(dateStr, true),
+    totalSeconds,
+    sessionCount,
+    dailyGoalSeconds,
+    goalPercent,
+    isGoalMet,
+    subjectBreakdown,
+    sessions: enrichedSessions
+  };
+}
+
+/**
+ * Generates an everyday breakdown for a period of days, ordered from newest to oldest.
+ * Gives individual statistics for each day (total study time, subjects, session count, goal status).
+ * @param {number} [days=7]
+ * @param {string} [anchorDate] - Defaults to today
+ * @returns {Promise<Array<Object>>}
+ */
+export async function getDailyBreakdown(days = 7, anchorDate) {
+  const todayStr = anchorDate || getLocalDateString(new Date());
+  const dateList = getPastNDays(days, todayStr); // Oldest to newest
+  
+  const [allSessions, subjects, settingsRecord] = await Promise.all([
+    getAllSessions(),
+    getAllSubjects({ includeArchived: true }),
+    get(STORES.SETTINGS, 'app_settings')
+  ]);
+
+  const settings = settingsRecord || DEFAULT_SETTINGS;
+  const dailyGoalSeconds = settings.dailyGoalSeconds || 14400;
+  const subjectMap = new Map(subjects.map((s) => [s.id, s]));
+
+  // Index sessions by date
+  const sessionsByDate = new Map();
+  for (const s of allSessions) {
+    const d = s.date;
+    if (d) {
+      if (!sessionsByDate.has(d)) sessionsByDate.set(d, []);
+      sessionsByDate.get(d).push(s);
+    }
+  }
+
+  // Build daily breakdown records
+  const breakdown = dateList.map((d) => {
+    const daySessions = sessionsByDate.get(d) || [];
+    const totalSeconds = daySessions.reduce((acc, s) => acc + (s.duration || 0), 0);
+    const sessionCount = daySessions.length;
+    const goalPercent = dailyGoalSeconds > 0 ? Math.min(999, Math.round((totalSeconds / dailyGoalSeconds) * 100)) : 0;
+    const isGoalMet = totalSeconds >= dailyGoalSeconds && dailyGoalSeconds > 0;
+
+    // Subject summaries for this day
+    const subjectMapForDay = new Map();
+    for (const s of daySessions) {
+      const sid = s.subjectId;
+      subjectMapForDay.set(sid, (subjectMapForDay.get(sid) || 0) + (s.duration || 0));
+    }
+
+    const subjectsSummary = Array.from(subjectMapForDay.entries())
+      .map(([sid, sec]) => {
+        const sub = subjectMap.get(sid) || { name: 'Unknown Subject', color: '#64748b' };
+        return {
+          subjectId: sid,
+          name: sub.name,
+          color: sub.color,
+          totalSeconds: sec,
+          percent: totalSeconds > 0 ? Math.round((sec / totalSeconds) * 100) : 0
+        };
+      })
+      .sort((a, b) => b.totalSeconds - a.totalSeconds);
+
+    return {
+      date: d,
+      displayDate: formatDisplayDate(d),
+      fullDate: formatFullDate(d),
+      weekday: formatWeekday(d, false),
+      weekdayShort: formatWeekday(d, true),
+      totalSeconds,
+      sessionCount,
+      dailyGoalSeconds,
+      goalPercent,
+      isGoalMet,
+      subjects: subjectsSummary
+    };
+  });
+
+  // Reverse so newest date is first for convenient scanning
+  return breakdown.reverse();
+}
+
