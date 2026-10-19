@@ -3,7 +3,7 @@
  * Provides 100% offline functionality and zero-dependency local asset caching.
  */
 
-const CACHE_NAME = 'studytracker-v1';
+const CACHE_NAME = 'studytracker-v3';
 
 const PRECACHE_ASSETS = [
   './',

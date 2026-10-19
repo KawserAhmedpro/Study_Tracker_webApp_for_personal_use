@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Phase 11 Daily Study Inspector & Breakdown Tests — StudyTracker</title>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #f8fafc; padding: 20px; line-height: 1.5; }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; font-weight: bold; }
+    .summary { margin-top: 20px; padding: 10px; border-top: 1px solid #334155; font-size: 1.1rem; }
+  </style>
+  <script src="assets/lib/chart.umd.min.js"></script>
+</head>
+<body>
+  <h1>StudyTracker Phase 11 — Daily Study Inspector & Day-by-Day Breakdown Verification</h1>
+  <div id="results"></div>
+  <div id="ui-mount" style="display:none;"></div>
+
+  <script type="module">
+    import { initDB, clear, STORES } from './js/db/database.js';
+    import { getLocalDateString, offsetDateString } from './js/utils/dateUtils.js';
+    import { getDayStatistics, getDailyBreakdown } from './js/services/statisticsService.js';
+    import { createSubject } from './js/services/subjectService.js';
+    import { saveSession } from './js/services/studyService.js';
+    import { renderStatistics, initStatistics, inspectDate } from './js/pages/statistics.js';
+
+    const resultsEl = document.getElementById('results');
+    let totalTests = 0;
+    let passedTests = 0;
+    const failures = [];
+
+    function assert(condition, message) {
+      totalTests++;
+      const div = document.createElement('div');
+      if (condition) {
+        passedTests++;
+        div.className = 'pass';
+        div.textContent = `[PASS] ${message}`;
+      } else {
+        failures.push(message);
+        div.className = 'fail';
+        div.textContent = `[FAIL] ${message}`;
+      }
+      resultsEl.appendChild(div);
+    }
+
+    async function runTests() {
+      try {
+        await initDB();
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+        await clear(STORES.SETTINGS);
+
+        const today = getLocalDateString(new Date());
+        const yesterday = offsetDateString(today, -1);
+        const dMinus2 = offsetDateString(today, -2);
+        const restDay = offsetDateString(today, -3);
+
+        // 1. Create Subjects
+        const math = await createSubject({ name: 'Mathematics', color: '#ef4444' });
+        const physics = await createSubject({ name: 'Physics', color: '#3b82f6' });
+
+        // 2. Create Sessions on Today: Math 2h (7200s), Physics 1h (3600s) -> Total 3h (10800s)
+        await saveSession({
+          subjectId: math.id,
+          topic: 'Calculus Integrals',
+          notes: 'Finished chapter 4 problems',
+          duration: 7200,
+          date: today,
+          startTime: `${today}T09:00:00.000Z`,
+          endTime: `${today}T11:00:00.000Z`
+        });
+
+        await saveSession({
+          subjectId: physics.id,
+          topic: 'Electromagnetism',
+          notes: 'Faraday law review',
+          duration: 3600,
+          date: today,
+          startTime: `${today}T14:00:00.000Z`,
+          endTime: `${today}T15:00:00.000Z`
+        });
+
+        // 3. Create Session on Yesterday: Physics 1.5h (5400s)
+        await saveSession({
+          subjectId: physics.id,
+          topic: 'Optics and Waves',
+          duration: 5400,
+          date: yesterday,
+          startTime: `${yesterday}T16:00:00.000Z`,
+          endTime: `${yesterday}T17:30:00.000Z`
+        });
+
+        // 4. Create Session on dMinus2: Math 45m (2700s)
+        await saveSession({
+          subjectId: math.id,
+          topic: 'Linear Algebra',
+          duration: 2700,
+          date: dMinus2,
+          startTime: `${dMinus2}T10:00:00.000Z`,
+          endTime: `${dMinus2}T10:45:00.000Z`
+        });
+
+        // Test 1: getDayStatistics for Today (multiple subjects, multiple sessions)
+        const todayStats = await getDayStatistics(today);
+        assert(todayStats.date === today, 'Today stats date matches requested date');
+        assert(todayStats.totalSeconds === 10800, `Today total seconds is 10800 (3 hrs) - got ${todayStats.totalSeconds}`);
+        assert(todayStats.sessionCount === 2, `Today session count is 2 - got ${todayStats.sessionCount}`);
+        assert(todayStats.subjectBreakdown.length === 2, 'Today subject breakdown includes both Math and Physics');
+        assert(todayStats.subjectBreakdown[0].name === 'Mathematics', 'Top subject today is Mathematics');
+        assert(todayStats.subjectBreakdown[0].totalSeconds === 7200, 'Mathematics study duration is 7200s');
+        assert(todayStats.subjectBreakdown[0].percent === 67, `Mathematics percentage is 67% (got ${todayStats.subjectBreakdown[0].percent}%)`);
+        assert(todayStats.sessions.length === 2, 'Enriched sessions list has 2 items');
+        assert(todayStats.sessions[0].subject.name !== undefined, 'Sessions have populated subject object');
+
+        // Test 2: getDayStatistics for Rest Day (0 sessions)
+        const restDayStats = await getDayStatistics(restDay);
+        assert(restDayStats.date === restDay, 'Rest day date matches');
+        assert(restDayStats.totalSeconds === 0, 'Rest day total seconds is 0');
+        assert(restDayStats.sessionCount === 0, 'Rest day session count is 0');
+        assert(restDayStats.subjectBreakdown.length === 0, 'Rest day subject breakdown is empty');
+        assert(restDayStats.isGoalMet === false, 'Rest day isGoalMet is false');
+
+        // Test 3: getDailyBreakdown(7)
+        const breakdown7 = await getDailyBreakdown(7, today);
+        assert(breakdown7.length === 7, `getDailyBreakdown(7) returns exactly 7 days (got ${breakdown7.length})`);
+        assert(breakdown7[0].date === today, 'First item in breakdown is today (ordered newest to oldest)');
+        assert(breakdown7[1].date === yesterday, 'Second item in breakdown is yesterday');
+        assert(breakdown7[0].totalSeconds === 10800, `Today entry in breakdown has 10800 seconds (got ${breakdown7[0].totalSeconds})`);
+        assert(breakdown7[1].totalSeconds === 5400, `Yesterday entry in breakdown has 5400 seconds (got ${breakdown7[1].totalSeconds})`);
+        assert(breakdown7[2].totalSeconds === 2700, `dMinus2 entry in breakdown has 2700 seconds (got ${breakdown7[2].totalSeconds})`);
+
+        // Test 4: UI Mounting & Inspector Rendering
+        const mount = document.getElementById('ui-mount');
+        mount.innerHTML = renderStatistics();
+        assert(document.getElementById('section-daily-inspector') !== null, 'Daily Inspector section is present in renderStatistics HTML');
+        assert(document.getElementById('section-daily-breakdown') !== null, 'Daily Breakdown section is present in renderStatistics HTML');
+        assert(document.getElementById('input-inspect-date') !== null, 'Date picker input is present');
+        assert(document.getElementById('btn-day-prev') !== null, 'Prev Day button is present');
+        assert(document.getElementById('btn-day-next') !== null, 'Next Day button is present');
+        assert(document.getElementById('btn-day-today') !== null, 'Today button is present');
+
+        // Initialize UI component logic
+        const cleanup = initStatistics();
+        await new Promise(r => setTimeout(r, 150));
+
+        // Test 5: Verify inspector rendered today's stats into DOM
+        const inspectorContent = document.getElementById('inspector-content');
+        assert(inspectorContent.textContent.includes('3h') || inspectorContent.textContent.includes('10800'), 'Inspector content rendered total study time for today');
+        assert(inspectorContent.textContent.includes('Mathematics'), 'Inspector content displays Mathematics subject');
+        assert(inspectorContent.textContent.includes('Physics'), 'Inspector content displays Physics subject');
+
+        // Test 6: Verify inspectDate on past date
+        await inspectDate(yesterday);
+        assert(inspectorContent.textContent.includes('1h 30m') || inspectorContent.textContent.includes('5400'), 'Inspector content updated to 1h 30m for yesterday');
+        assert(inspectorContent.textContent.includes('Optics and Waves'), 'Inspector content displays yesterday session topic');
+
+        // Test 7: Verify inspectDate on rest day
+        await inspectDate(restDay);
+        assert(inspectorContent.textContent.includes('No study recorded'), 'Inspector displays polite rest day message for 0 study day');
+
+        // Test 8: Verify Day-by-Day breakdown rows rendered in DOM
+        const dailyRows = document.querySelectorAll('.daily-row');
+        assert(dailyRows.length === 7, `7 daily breakdown rows rendered in DOM (got ${dailyRows.length})`);
+        const firstRow = dailyRows[0];
+        assert(firstRow.textContent.includes('3h') || firstRow.textContent.includes('Today'), 'First daily breakdown row contains today study duration');
+
+        if (typeof cleanup === 'function') cleanup();
+
+        // Summary
+        const summary = document.createElement('div');
+        summary.className = 'summary';
+        summary.innerHTML = `<strong>Tests Passed: ${passedTests} / ${totalTests}</strong>`;
+        resultsEl.appendChild(summary);
+
+        // Report to test runner if in headless automated mode
+        if (window.location.search.includes('runner') || true) {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              passed: passedTests === totalTests,
+              total: totalTests,
+              passedTests: passedTests,
+              failures: failures
+            })
+          }).catch(() => {});
+        }
+
+      } catch (err) {
+        console.error(err);
+        assert(false, `Unexpected test exception: ${err.message}`);
+      }
+    }
+
+    runTests();
+  </script>
+</body>
+</html>
