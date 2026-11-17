@@ -3,6 +3,7 @@ import { escapeHtml } from '../utils/formatUtils.js';
 import { formatDuration } from '../utils/timeUtils.js';
 import { formatTimeRange } from '../utils/dateUtils.js';
 import { getDashboardData } from '../services/statisticsService.js';
+import { getDailyTaskSummary } from '../services/plannerService.js';
 
 export function renderDashboard() {
   return `
@@ -61,6 +62,22 @@ export function renderDashboard() {
           </div>
           <div class="metric-value" id="dash-week-total">0m</div>
           <div class="metric-sub" id="dash-week-avg">Daily avg: 0m</div>
+        </div>
+      </section>
+
+      <!-- Today's Planner Summary Card -->
+      <section class="card planner-dash-card" style="margin-bottom: 1.5rem;" aria-label="Today's Planner Summary">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+          <h2 class="card-title">
+            ${icon('planner', { size: 18 })}
+            <span>Today's Study Plan</span>
+          </h2>
+          <a href="#/planner" class="btn btn-ghost btn-sm">Open Full Planner</a>
+        </div>
+        <div id="dash-planner-content">
+          <div class="empty-state" style="padding: 1.25rem;">
+            <p class="text-muted">Loading today's planned tasks...</p>
+          </div>
         </div>
       </section>
 
@@ -224,6 +241,86 @@ async function loadAndRenderDashboard() {
       }
     }
 
+    // 7. Today's Planner Summary
+    const plannerContentEl = document.getElementById('dash-planner-content');
+    if (plannerContentEl) {
+      try {
+        const planSummary = await getDailyTaskSummary();
+        if (planSummary.total === 0) {
+          plannerContentEl.innerHTML = `
+            <div class="empty-state" style="padding: 1.5rem 1rem;">
+              <div class="empty-state-icon">${icon('calendar', { size: 32 })}</div>
+              <h3 class="empty-state-title" style="font-size: 0.95rem;">No tasks planned for today</h3>
+              <p class="empty-state-text" style="font-size: 0.85rem; margin-bottom: 0.75rem;">Plan tomorrow's study targets or set your goals for today.</p>
+              <a href="#/planner" class="btn btn-secondary btn-sm">
+                ${icon('plus', { size: 14 })}
+                <span>Open Planner</span>
+              </a>
+            </div>
+          `;
+        } else {
+          const rate = planSummary.completionRate;
+          const isAllDone = planSummary.total > 0 && planSummary.completed === planSummary.total;
+          const previewTasks = planSummary.tasks.slice(0, 3);
+
+          plannerContentEl.innerHTML = `
+            <div style="padding: 0.5rem 0.25rem 0 0.25rem;">
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 0.75rem; margin-bottom: 0.85rem;">
+                <div style="display: flex; flex-direction: column;">
+                  <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Planned</span>
+                  <span style="font-size: 1.25rem; font-weight: 700; color: var(--text-primary);">${planSummary.total} tasks</span>
+                </div>
+                <div style="display: flex; flex-direction: column;">
+                  <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Completed</span>
+                  <span style="font-size: 1.25rem; font-weight: 700; color: var(--success);">${planSummary.completed}</span>
+                </div>
+                <div style="display: flex; flex-direction: column;">
+                  <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Pending</span>
+                  <span style="font-size: 1.25rem; font-weight: 700; color: var(--warning);">${planSummary.pending}</span>
+                </div>
+                <div style="display: flex; flex-direction: column;">
+                  <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Completion Rate</span>
+                  <span style="font-size: 1.25rem; font-weight: 700; color: var(--primary);">${rate}%</span>
+                </div>
+              </div>
+
+              <!-- Progress Bar -->
+              <div style="height: 8px; background-color: var(--bg-surface-active); border-radius: var(--radius-full); overflow: hidden; margin-bottom: 0.85rem;">
+                <div style="height: 100%; width: ${Math.min(100, rate)}%; background-color: ${isAllDone ? 'var(--success)' : 'var(--primary)'}; border-radius: var(--radius-full); transition: width 0.3s ease;"></div>
+              </div>
+
+              <!-- Preview List -->
+              <div style="display: flex; flex-direction: column; gap: 0.4rem;">
+                ${previewTasks.map((t) => `
+                  <div style="display: flex; align-items: center; justify-content: space-between; font-size: 0.85rem; padding: 0.35rem 0.6rem; background-color: var(--bg-surface-hover); border-radius: var(--radius-sm);">
+                    <div style="display: flex; align-items: center; gap: 0.5rem; min-width: 0;">
+                      <span style="color: ${t.status === 'completed' ? 'var(--success)' : 'var(--text-muted)'}; display: inline-flex;">
+                        ${icon(t.status === 'completed' ? 'check' : 'square', { size: 14 })}
+                      </span>
+                      <span style="font-weight: 500; ${t.status === 'completed' ? 'text-decoration: line-through; color: var(--text-muted);' : 'color: var(--text-primary);'}; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">
+                        ${escapeHtml(t.title)}
+                      </span>
+                      ${t.subject ? `<span style="font-size: 0.72rem; color: ${escapeHtml(t.subject.color)}; font-weight: 600;">• ${escapeHtml(t.subject.name)}</span>` : ''}
+                    </div>
+                    <span style="font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; margin-left: 0.5rem;">
+                      ${t.hasTargetDuration ? formatDuration(t.targetDurationSeconds) : 'No target'}
+                    </span>
+                  </div>
+                `).join('')}
+                ${planSummary.tasks.length > 3 ? `
+                  <div style="text-align: right; margin-top: 0.25rem;">
+                    <a href="#/planner" style="font-size: 0.8rem; color: var(--primary); text-decoration: none; font-weight: 600;">+ ${planSummary.tasks.length - 3} more task${planSummary.tasks.length - 3 === 1 ? '' : 's'} in Planner &rarr;</a>
+                  </div>
+                ` : ''}
+              </div>
+            </div>
+          `;
+        }
+      } catch (e) {
+        console.warn('Failed to load dashboard planner preview:', e);
+      }
+    }
+
   } catch (err) {
     console.error('Failed to load dashboard metrics:', err);
   }
@@ -236,10 +333,12 @@ export function initDashboard() {
   window.addEventListener('studytracker:sessions-changed', handleUpdate);
   window.addEventListener('studytracker:subjects-changed', handleUpdate);
   window.addEventListener('studytracker:settings-changed', handleUpdate);
+  window.addEventListener('studytracker:tasks-changed', handleUpdate);
 
   return () => {
     window.removeEventListener('studytracker:sessions-changed', handleUpdate);
     window.removeEventListener('studytracker:subjects-changed', handleUpdate);
     window.removeEventListener('studytracker:settings-changed', handleUpdate);
+    window.removeEventListener('studytracker:tasks-changed', handleUpdate);
   };
 }

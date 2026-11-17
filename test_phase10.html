@@ -53,6 +53,7 @@
     import { getLocalDateString, offsetDateString } from './js/utils/dateUtils.js';
 
     import { renderDashboard } from './js/pages/dashboard.js';
+    import { renderPlanner } from './js/pages/planner.js';
     import { renderTimer } from './js/pages/timer.js';
     import { renderHistory } from './js/pages/history.js';
     import { renderStatistics } from './js/pages/statistics.js';
@@ -96,11 +97,13 @@
         assert(db.objectStoreNames.contains(STORES.SESSIONS), 'Store STORES.SESSIONS exists');
         assert(db.objectStoreNames.contains(STORES.SETTINGS), 'Store STORES.SETTINGS exists');
         assert(db.objectStoreNames.contains(STORES.ACTIVE_SESSION), 'Store STORES.ACTIVE_SESSION exists');
+        assert(db.objectStoreNames.contains(STORES.PLANNED_TASKS), 'Store STORES.PLANNED_TASKS exists');
 
         // Clean test environment
         await clear(STORES.SUBJECTS);
         await clear(STORES.SESSIONS);
         await clear(STORES.ACTIVE_SESSION);
+        await clear(STORES.PLANNED_TASKS);
 
         // ==========================================
         // 2. Subject Service CRUD & Safe Archiving
@@ -305,6 +308,9 @@
         addSection('9. UI View Rendering & Theme');
         const dashboardHtml = renderDashboard();
         assert(dashboardHtml.includes('metric-card') && dashboardHtml.includes('Daily Goal'), 'renderDashboard() generates hero metrics & cards');
+
+        const plannerHtml = renderPlanner();
+        assert(plannerHtml.includes('planner-date-nav') && plannerHtml.includes('planner-progress-card'), 'renderPlanner() generates planner date navigation and progress card');
 
         const timerHtml = renderTimer();
         assert(timerHtml.includes('timer-card') && timerHtml.includes('btn-timer-start'), 'renderTimer() generates distraction-free timer layout');

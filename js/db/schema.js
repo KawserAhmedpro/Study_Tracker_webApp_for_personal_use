@@ -3,13 +3,14 @@
  */
 
 export const DB_NAME = 'studytracker_db';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 export const STORES = Object.freeze({
   SUBJECTS: 'subjects',
   SESSIONS: 'studySessions',
   SETTINGS: 'settings',
-  ACTIVE_SESSION: 'activeSession'
+  ACTIVE_SESSION: 'activeSession',
+  PLANNED_TASKS: 'plannedTasks'
 });
 
 export const DEFAULT_SETTINGS = Object.freeze({
@@ -61,6 +62,9 @@ export function validateSession(session) {
   }
   if (session.topic !== undefined && typeof session.topic !== 'string') {
     errors.push('Session topic must be a string');
+  }
+  if (session.taskId !== undefined && session.taskId !== null && typeof session.taskId !== 'string') {
+    errors.push('Session taskId must be a string or null');
   }
   if (typeof session.duration !== 'number' || isNaN(session.duration) || session.duration < 0) {
     errors.push('Session duration must be a non-negative number of seconds');
@@ -126,5 +130,63 @@ export function validateSettings(settings) {
   if (settings.theme && settings.theme !== 'light' && settings.theme !== 'dark' && settings.theme !== 'system') {
     errors.push('theme must be "light", "dark", or "system"');
   }
+  return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Validates a planned study task entity.
+ * @param {Object} task
+ * @returns {{ valid: boolean, errors: string[] }}
+ */
+export function validatePlannedTask(task) {
+  const errors = [];
+  if (!task || typeof task !== 'object') {
+    return { valid: false, errors: ['Task must be a valid object'] };
+  }
+  if (!task.id || typeof task.id !== 'string') {
+    errors.push('Task id is required and must be a string');
+  }
+  if (!task.title || typeof task.title !== 'string' || !task.title.trim()) {
+    errors.push('Task title is required');
+  }
+  if (task.subjectId !== undefined && task.subjectId !== null && typeof task.subjectId !== 'string') {
+    errors.push('Task subjectId must be a string or null');
+  }
+  if (task.description !== undefined && task.description !== null && typeof task.description !== 'string') {
+    errors.push('Task description must be a string');
+  }
+  if (!task.targetDate || typeof task.targetDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(task.targetDate)) {
+    errors.push('Task targetDate must be in YYYY-MM-DD format');
+  } else {
+    const [y, m, d] = task.targetDate.split('-').map(Number);
+    const testDate = new Date(y, m - 1, d);
+    if (testDate.getFullYear() !== y || testDate.getMonth() + 1 !== m || testDate.getDate() !== d) {
+      errors.push('Task targetDate must be a valid calendar date');
+    }
+  }
+  if (task.targetDurationSeconds !== undefined && task.targetDurationSeconds !== null) {
+    if (typeof task.targetDurationSeconds !== 'number' || isNaN(task.targetDurationSeconds) || task.targetDurationSeconds < 0) {
+      errors.push('Task targetDurationSeconds must be a non-negative number of seconds or null');
+    }
+  }
+  if (task.priority !== undefined && task.priority !== null) {
+    if (!['low', 'medium', 'high'].includes(task.priority)) {
+      errors.push('Task priority must be "low", "medium", or "high"');
+    }
+  }
+  if (task.status !== undefined && task.status !== null) {
+    if (!['pending', 'completed'].includes(task.status)) {
+      errors.push('Task status must be "pending" or "completed"');
+    }
+  }
+  if (task.completedAt !== undefined && task.completedAt !== null) {
+    if (typeof task.completedAt !== 'string' || isNaN(new Date(task.completedAt).getTime())) {
+      errors.push('Task completedAt must be a valid timestamp or null');
+    }
+  }
+  if (task.sourceTaskId !== undefined && task.sourceTaskId !== null && typeof task.sourceTaskId !== 'string') {
+    errors.push('Task sourceTaskId must be a string or null');
+  }
+
   return { valid: errors.length === 0, errors };
 }

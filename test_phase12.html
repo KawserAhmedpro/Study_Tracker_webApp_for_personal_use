@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Phase 12 Daily Study Planner & Target Tracker Verification — StudyTracker</title>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #f8fafc; padding: 20px; line-height: 1.5; }
+    h1 { color: #38bdf8; font-size: 1.4rem; }
+    h2 { color: #818cf8; font-size: 1.1rem; margin-top: 1.5rem; border-bottom: 1px solid #334155; padding-bottom: 4px; }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; font-weight: bold; }
+    .summary { margin-top: 25px; padding: 15px; border-top: 2px solid #334155; font-size: 1.15rem; }
+  </style>
+</head>
+<body>
+  <h1>StudyTracker Phase 12 — Daily Study Planner & Target Tracker Automated Verification</h1>
+  <div id="results"></div>
+
+  <!-- Hidden canvases for Chart.js rendering tests -->
+  <div style="display: none;">
+    <canvas id="trendChartCanvas" width="400" height="200"></canvas>
+    <canvas id="distributionChartCanvas" width="400" height="200"></canvas>
+    <canvas id="taskCompletionChartCanvas" width="400" height="200"></canvas>
+    <div id="view-container"></div>
+  </div>
+
+  <script src="assets/lib/chart.umd.min.js"></script>
+  <script type="module">
+    import { initDB, clear, get, getAll, put, count, STORES } from './js/db/database.js';
+    import {
+      validatePlannedTask,
+      validateSession,
+      validateSubject,
+      validateSettings,
+      DB_VERSION
+    } from './js/db/schema.js';
+    import { createSubject, getAllSubjects } from './js/services/subjectService.js';
+    import { saveSession, getAllSessions, getSessionsByTaskId } from './js/services/studyService.js';
+    import {
+      createTask,
+      getTaskById,
+      getAllTasks,
+      getTasksByDate,
+      getTasksByDateRange,
+      updateTask,
+      deleteTask,
+      completeTask,
+      reopenTask,
+      planTaskAgain,
+      getTaskActualDuration,
+      getTasksWithProgress,
+      getDailyTaskSummary,
+      getHistoricalTaskSummary,
+      getTaskCompletionStats
+    } from './js/services/plannerService.js';
+    import { timerService } from './js/services/timerService.js';
+    import { exportBackup, validateBackupData, importBackup } from './js/services/backupService.js';
+    import { getDashboardData } from './js/services/statisticsService.js';
+    import { getLocalDateString, offsetDateString, formatDisplayDate } from './js/utils/dateUtils.js';
+
+    import { renderPlanner } from './js/pages/planner.js';
+    import { renderDashboard } from './js/pages/dashboard.js';
+    import { renderStatistics } from './js/pages/statistics.js';
+    import { renderTimer } from './js/pages/timer.js';
+    import { renderHistory } from './js/pages/history.js';
+
+    const resultsEl = document.getElementById('results');
+    let totalTests = 0;
+    let passedTests = 0;
+    const failures = [];
+
+    function addSection(title) {
+      const h = document.createElement('h2');
+      h.textContent = title;
+      resultsEl.appendChild(h);
+    }
+
+    function assert(condition, message) {
+      totalTests++;
+      const div = document.createElement('div');
+      if (condition) {
+        passedTests++;
+        div.className = 'pass';
+        div.textContent = `[PASS] ${message}`;
+      } else {
+        div.className = 'fail';
+        div.textContent = `[FAIL] ${message}`;
+        failures.push(message);
+      }
+      resultsEl.appendChild(div);
+    }
+
+    async function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    async function runPlannerTests() {
+      try {
+        const todayStr = getLocalDateString(new Date());
+        const tomorrowStr = offsetDateString(todayStr, 1);
+        const yesterdayStr = offsetDateString(todayStr, -1);
+
+        // ==========================================
+        // Setup: Database Init & Clean State
+        // ==========================================
+        addSection('0. Database & Object Stores Setup');
+        const db = await initDB();
+        assert(db !== null, 'IndexedDB initialized');
+        assert(db.objectStoreNames.contains(STORES.PLANNED_TASKS), 'Store STORES.PLANNED_TASKS exists');
+        assert(db.objectStoreNames.contains(STORES.SESSIONS), 'Store STORES.SESSIONS exists');
+
+        await clear(STORES.SUBJECTS);
+        await clear(STORES.SESSIONS);
+        await clear(STORES.ACTIVE_SESSION);
+        await clear(STORES.PLANNED_TASKS);
+
+        const subML = await createSubject({ name: 'Machine Learning', color: '#3b82f6' });
+        const subDB = await createSubject({ name: 'Database', color: '#10b981' });
+
+        // ==========================================
+        // Requirement 1: Create a task for tomorrow
+        // ==========================================
+        addSection('1. Task Planning for Tomorrow');
+        const taskTomorrow = await createTask({
+          title: 'Study KNN algorithm',
+          subjectId: subML.id,
+          targetDate: tomorrowStr,
+          targetDurationSeconds: 3600,
+          priority: 'high',
+          description: 'Understand KNN distance metrics and k selection'
+        });
+        assert(taskTomorrow && taskTomorrow.id, 'Task for tomorrow created successfully with ID');
+        assert(taskTomorrow.targetDate === tomorrowStr, 'Task has targetDate set to tomorrow');
+        assert(taskTomorrow.status === 'pending', 'Newly created task starts with status "pending"');
+        assert(taskTomorrow.priority === 'high', 'Task priority correctly set to "high"');
+
+        // ==========================================
+        // Requirement 2: Multiple tasks for same subject and date
+        // ==========================================
+        addSection('2. Multiple Tasks for Same Subject and Date');
+        const taskKNN2 = await createTask({
+          title: 'Practice KNN calculations',
+          subjectId: subML.id,
+          targetDate: tomorrowStr,
+          targetDurationSeconds: 1800,
+          priority: 'medium'
+        });
+        const taskKNN3 = await createTask({
+          title: 'Revise supervised learning',
+          subjectId: subML.id,
+          targetDate: tomorrowStr,
+          priority: 'low'
+        });
+        const tomorrowTasks = await getTasksByDate(tomorrowStr);
+        assert(tomorrowTasks.length === 3, `Successfully created 3 tasks for same subject and date (found ${tomorrowTasks.length})`);
+        assert(tomorrowTasks.every(t => t.subjectId === subML.id), 'All 3 tasks belong to Machine Learning subject');
+
+        // ==========================================
+        // Requirement 3: Create a task without a subject
+        // ==========================================
+        addSection('3. Task Creation Without Subject');
+        const taskNoSubject = await createTask({
+          title: 'Review weekly schedule & planner',
+          targetDate: todayStr,
+          description: 'General planning task'
+        });
+        assert(taskNoSubject && taskNoSubject.subjectId === null, 'Task created with null subjectId');
+        const fetchedNoSubject = await getTaskById(taskNoSubject.id);
+        assert(fetchedNoSubject && fetchedNoSubject.subjectId === null, 'Retrieved task persists null subjectId');
+
+        // ==========================================
+        // Requirement 4: Create a task without target duration
+        // ==========================================
+        addSection('4. Task Creation Without Target Duration');
+        const taskNoDuration = await createTask({
+          title: 'Read research paper abstract',
+          subjectId: subML.id,
+          targetDate: todayStr
+        });
+        assert(taskNoDuration.targetDurationSeconds === null, 'Task targetDurationSeconds is null when omitted');
+
+        // ==========================================
+        // Requirement 5: Edit a task
+        // ==========================================
+        addSection('5. Task Editing');
+        const updatedTask = await updateTask(taskTomorrow.id, {
+          title: 'Master KNN and Weighted Distance',
+          priority: 'medium',
+          targetDurationSeconds: 4500
+        });
+        assert(updatedTask.title === 'Master KNN and Weighted Distance', 'Task title updated successfully');
+        assert(updatedTask.priority === 'medium', 'Task priority updated');
+        assert(updatedTask.targetDurationSeconds === 4500, 'Task target duration updated');
+
+        // ==========================================
+        // Requirement 6: Delete a task
+        // ==========================================
+        addSection('6. Task Deletion');
+        const taskToDelete = await createTask({
+          title: 'Temporary task to delete',
+          targetDate: todayStr
+        });
+        await deleteTask(taskToDelete.id);
+        const deletedCheck = await getTaskById(taskToDelete.id);
+        assert(deletedCheck === null, 'Task successfully removed from IndexedDB');
+
+        // ==========================================
+        // Requirement 7: Manually complete a task
+        // ==========================================
+        addSection('7. Method A: Manual Completion');
+        const completedTask = await completeTask(taskKNN2.id);
+        assert(completedTask.status === 'completed', 'Task marked status "completed"');
+        assert(typeof completedTask.completedAt === 'string', 'Task records completedAt timestamp');
+
+        // Check daily summary reflects completion
+        const summaryTomorrow = await getDailyTaskSummary(tomorrowStr);
+        assert(summaryTomorrow.completed === 1, 'Daily summary reports 1 completed task');
+        assert(summaryTomorrow.pending === 2, 'Daily summary reports 2 pending tasks');
+        assert(summaryTomorrow.completionRate === 33.3, `Daily completion rate is 33.3% (got ${summaryTomorrow.completionRate}%)`);
+
+        // ==========================================
+        // Requirement 8: Reopen a completed task
+        // ==========================================
+        addSection('8. Reopening Completed Task (Undo)');
+        const reopenedTask = await reopenTask(taskKNN2.id);
+        assert(reopenedTask.status === 'pending', 'Reopened task returns to status "pending"');
+        assert(reopenedTask.completedAt === null, 'completedAt timestamp cleared on reopen');
+
+        // ==========================================
+        // Requirement 9: Start a Timer from a planned task
+        // ==========================================
+        addSection('9. Method B: Start Timer From Planned Task');
+        const taskTimerTarget = await createTask({
+          title: 'Study SQL Normalization',
+          subjectId: subDB.id,
+          targetDate: todayStr,
+          targetDurationSeconds: 3600 // 60 minutes target
+        });
+
+        await timerService.start({
+          subjectId: taskTimerTarget.subjectId,
+          topic: taskTimerTarget.title,
+          taskId: taskTimerTarget.id
+        });
+
+        const timerState = timerService.getState();
+        assert(timerState.status === 'running', 'Timer enters "running" state');
+        assert(timerState.taskId === taskTimerTarget.id, 'Timer retains association with taskId');
+        assert(timerState.topic === 'Study SQL Normalization', 'Timer uses task title as study topic');
+        assert(timerState.subjectId === subDB.id, 'Timer automatically uses task subject');
+
+        // ==========================================
+        // Requirement 10: Save a study session associated with a task
+        // ==========================================
+        addSection('10. Save Study Session Associated With Task');
+        await sleep(1100);
+        await timerService.stop();
+        const savedSession1 = await timerService.saveCompletedSession({ notes: 'Studied 1NF and 2NF' });
+        assert(savedSession1 && savedSession1.id, 'Study session saved');
+        assert(savedSession1.taskId === taskTimerTarget.id, 'Saved session contains associated taskId');
+        assert(savedSession1.subjectId === subDB.id, 'Saved session contains task subjectId');
+
+        // ==========================================
+        // Requirement 11 & 12: Multiple Timer Sessions & Accumulated Duration
+        // ==========================================
+        addSection('11 & 12. Multiple Sessions for Same Task & Accumulated Duration');
+        // Log second session for same task (e.g., 1200 seconds / 20 mins)
+        const sessStart2 = new Date(Date.now() - 2000000);
+        const sessEnd2 = new Date(sessStart2.getTime() + 1200000);
+        await saveSession({
+          subjectId: subDB.id,
+          topic: taskTimerTarget.title,
+          taskId: taskTimerTarget.id,
+          startTime: sessStart2.toISOString(),
+          endTime: sessEnd2.toISOString(),
+          duration: 1200,
+          date: todayStr
+        });
+
+        // Log third session for same task (e.g., 900 seconds / 15 mins)
+        const sessStart3 = new Date(Date.now() - 800000);
+        const sessEnd3 = new Date(sessStart3.getTime() + 900000);
+        await saveSession({
+          subjectId: subDB.id,
+          topic: taskTimerTarget.title,
+          taskId: taskTimerTarget.id,
+          startTime: sessStart3.toISOString(),
+          endTime: sessEnd3.toISOString(),
+          duration: 900,
+          date: todayStr
+        });
+
+        const associatedSessions = await getSessionsByTaskId(taskTimerTarget.id);
+        assert(associatedSessions.length === 3, `Task has 3 associated study sessions (got ${associatedSessions.length})`);
+
+        const totalActualSec = await getTaskActualDuration(taskTimerTarget.id);
+        const expectedSec = savedSession1.duration + 1200 + 900;
+        assert(totalActualSec === expectedSec, `Actual duration correctly sums all 3 sessions (${totalActualSec}s === ${expectedSec}s)`);
+
+        // ==========================================
+        // Requirement 13: Verify target-duration progress
+        // ==========================================
+        addSection('13. Target Duration Progress Calculation');
+        const tasksWithProgress = await getTasksWithProgress(todayStr);
+        const enrichedTargetTask = tasksWithProgress.find(t => t.id === taskTimerTarget.id);
+        assert(enrichedTargetTask !== undefined, 'Target task found in daily progress list');
+        assert(enrichedTargetTask.actualDurationSeconds === totalActualSec, 'Enriched task has exact actual duration');
+        const expectedPercent = Math.round((totalActualSec / 3600) * 100);
+        assert(enrichedTargetTask.timeProgressPercent === expectedPercent, `Time progress percent is ${expectedPercent}%`);
+
+        // ==========================================
+        // Requirement 14: Reaching duration does NOT automatically mark Completed
+        // ==========================================
+        addSection('14. Target Reached Does NOT Auto-Complete Task');
+        // Add a 4th session exceeding 3600s total
+        const nowMs = Date.now();
+        await saveSession({
+          subjectId: subDB.id,
+          topic: taskTimerTarget.title,
+          taskId: taskTimerTarget.id,
+          startTime: new Date(nowMs - 2000000).toISOString(),
+          endTime: new Date(nowMs).toISOString(),
+          duration: 2000,
+          date: todayStr
+        });
+        const enrichedExceeded = (await getTasksWithProgress(todayStr)).find(t => t.id === taskTimerTarget.id);
+        assert(enrichedExceeded.isTargetReached === true, 'isTargetReached flag is true when actual >= target');
+        const rawTaskAfterExceed = await getTaskById(taskTimerTarget.id);
+        assert(rawTaskAfterExceed.status === 'pending', 'CRITICAL: Reaching target duration DID NOT automatically complete task (status remains "pending")');
+
+        // ==========================================
+        // Requirement 15: Overdue task remains Pending
+        // ==========================================
+        addSection('15. Overdue Tasks Rule');
+        const overdueTask = await createTask({
+          title: 'Learn ASP.NET Core Middleware',
+          subjectId: subDB.id,
+          targetDate: yesterdayStr, // Scheduled in the past
+          priority: 'high'
+        });
+        assert(overdueTask.status === 'pending', 'Overdue task created with "pending"');
+        const tasksPast = await getTasksWithProgress(yesterdayStr);
+        const overdueItem = tasksPast.find(t => t.id === overdueTask.id);
+        assert(overdueItem.status === 'pending', 'Incomplete task remains "pending" after target date passes');
+        assert(overdueItem.isOverdue === true, 'Overdue task correctly flagged with isOverdue=true');
+
+        // ==========================================
+        // Requirement 16 & 17: "Plan Again" preserves original task
+        // ==========================================
+        addSection('16 & 17. Plan Again (Add to Another Day) & Historical Integrity');
+        const plannedAgainTask = await planTaskAgain(overdueTask.id, tomorrowStr);
+        assert(plannedAgainTask && plannedAgainTask.id !== overdueTask.id, 'Plan Again created a new unique task instance');
+        assert(plannedAgainTask.sourceTaskId === overdueTask.id, 'New task references original task as sourceTaskId');
+        assert(plannedAgainTask.targetDate === tomorrowStr, 'New task scheduled for tomorrow');
+        assert(plannedAgainTask.status === 'pending', 'New task begins as pending');
+
+        // Verify original task is untouched
+        const originalUntouched = await getTaskById(overdueTask.id);
+        assert(originalUntouched.targetDate === yesterdayStr, 'Original task targetDate remains yesterday');
+        assert(originalUntouched.status === 'pending', 'Original task status untouched');
+
+        // ==========================================
+        // Requirement 18: Historical task records
+        // ==========================================
+        addSection('18. Historical Task Records');
+        const historySummaries = await getHistoricalTaskSummary(7, todayStr);
+        assert(Array.isArray(historySummaries) && historySummaries.length === 7, 'getHistoricalTaskSummary returns 7 days of records');
+        const yesterdayRecord = historySummaries.find(h => h.date === yesterdayStr);
+        assert(yesterdayRecord && yesterdayRecord.total >= 1, 'Historical summary retains yesterday planned task');
+
+        // ==========================================
+        // Requirement 19 & 20: Persistence across re-init
+        // ==========================================
+        addSection('19 & 20. Persistence Verification');
+        const storedTasks = await getAllTasks();
+        assert(storedTasks.length >= 6, `IndexedDB reliably persisted all tasks (${storedTasks.length} tasks in store)`);
+
+        // ==========================================
+        // Requirement 21: Backup Export and Import
+        // ==========================================
+        addSection('21. JSON Backup Export & Import With Tasks');
+        const backupResult = await exportBackup();
+        assert(backupResult && backupResult.tasksCount >= 6, `Backup export includes planned tasks (${backupResult.tasksCount} tasks)`);
+
+        const allExportedSubs = await getAll(STORES.SUBJECTS);
+        const allExportedSess = await getAll(STORES.SESSIONS);
+        const allExportedTasks = await getAll(STORES.PLANNED_TASKS);
+
+        const mockBackup = {
+          appName: 'StudyTracker',
+          schemaVersion: DB_VERSION,
+          exportedAt: new Date().toISOString(),
+          subjects: allExportedSubs,
+          studySessions: allExportedSess,
+          plannedTasks: allExportedTasks,
+          settings: { dailyGoalSeconds: 14400, theme: 'dark' }
+        };
+
+        const valRes = validateBackupData(mockBackup);
+        assert(valRes.valid === true, 'Backup passes schema validation with plannedTasks array');
+        assert(valRes.summary.tasksCount === allExportedTasks.length, 'Summary reports exact planned tasks count');
+
+        // Replace Mode Import test
+        const replaceRes = await importBackup({ cleanData: valRes.cleanData, mode: 'replace' });
+        assert(replaceRes.importedTasks === allExportedTasks.length, 'Replace mode imported all planned tasks');
+        const tasksAfterReplace = await getAll(STORES.PLANNED_TASKS);
+        assert(tasksAfterReplace.length === allExportedTasks.length, 'Database contains all tasks after replace import');
+
+        // Merge Mode Import test
+        const mergeRes = await importBackup({ cleanData: valRes.cleanData, mode: 'merge' });
+        assert(mergeRes.importedTasks === allExportedTasks.length, 'Merge mode import executed successfully');
+
+        // ==========================================
+        // Requirement 22: Old backup compatibility (Without Planner data)
+        // ==========================================
+        addSection('22. Old Backup Compatibility (Missing plannedTasks)');
+        const legacyBackup = {
+          appName: 'StudyTracker',
+          schemaVersion: 1,
+          exportedAt: '2026-10-01T10:00:00.000Z',
+          subjects: allExportedSubs,
+          studySessions: allExportedSess,
+          settings: { dailyGoalSeconds: 7200, theme: 'system' }
+        }; // Notice: plannedTasks property is completely omitted!
+
+        const legacyValRes = validateBackupData(legacyBackup);
+        assert(legacyValRes.valid === true, 'Legacy backup without plannedTasks passes validation safely');
+        assert(Array.isArray(legacyValRes.cleanData.plannedTasks) && legacyValRes.cleanData.plannedTasks.length === 0, 'Legacy backup defaults plannedTasks to empty array');
+
+        // ==========================================
+        // Requirement 23: Light and dark theme rendering
+        // ==========================================
+        addSection('23. Light and Dark Theme Verification');
+        document.documentElement.setAttribute('data-theme', 'dark');
+        assert(document.documentElement.getAttribute('data-theme') === 'dark', 'Theme set to dark mode');
+        const plannerDarkHtml = renderPlanner();
+        assert(plannerDarkHtml.includes('planner-page'), 'Planner renders cleanly in dark mode');
+        document.documentElement.setAttribute('data-theme', 'light');
+        assert(document.documentElement.getAttribute('data-theme') === 'light', 'Theme returned to light mode');
+
+        // ==========================================
+        // Requirement 24: Navigation & UI views
+        // ==========================================
+        addSection('24. Navigation & Views Integration');
+        assert(plannerDarkHtml.includes('tab-btn-daily') && plannerDarkHtml.includes('tab-btn-history'), 'Planner template contains Daily and History tabs');
+        assert(plannerDarkHtml.includes('btn-planner-today') && plannerDarkHtml.includes('btn-planner-tomorrow'), 'Planner contains Today and Tomorrow shortcuts');
+
+        // Check Dashboard integration
+        const dashHtml = renderDashboard();
+        assert(dashHtml.includes('planner-dash-card'), 'Dashboard template contains Planner summary card');
+        assert(dashHtml.includes('Open Full Planner'), 'Dashboard contains link to full Planner');
+
+        // Check Statistics integration
+        const statsHtml = renderStatistics();
+        assert(statsHtml.includes('section-task-statistics'), 'Statistics template contains Task Completion Statistics section');
+        assert(statsHtml.includes('taskCompletionChartCanvas'), 'Statistics template contains Task Completion Chart canvas');
+
+        // ==========================================
+        // Requirement 25: PWA & Offline Precache List
+        // ==========================================
+        addSection('25. PWA Precache Assets Verification');
+        const swFetch = await fetch('./sw.js');
+        assert(swFetch.ok, 'sw.js is accessible (200 OK)');
+        const swContent = await swFetch.text();
+        assert(swContent.includes('studytracker-v4'), 'Service Worker cache version updated to v4');
+        assert(swContent.includes('./css/planner.css'), 'sw.js precaches ./css/planner.css');
+        assert(swContent.includes('./js/services/plannerService.js'), 'sw.js precaches ./js/services/plannerService.js');
+        assert(swContent.includes('./js/pages/planner.js'), 'sw.js precaches ./js/pages/planner.js');
+        assert(swContent.includes('./js/components/taskModal.js'), 'sw.js precaches ./js/components/taskModal.js');
+
+        // ==========================================
+        // Requirement 26 & 27: Existing Core Features Unbroken
+        // ==========================================
+        addSection('26 & 27. Preserved Existing Core Features');
+        const allSessionsCheck = await getAllSessions();
+        assert(allSessionsCheck.length >= 4, `All existing study sessions intact (${allSessionsCheck.length} sessions)`);
+        const dashData = await getDashboardData();
+        assert(dashData && typeof dashData.todaySeconds === 'number', 'Dashboard aggregations function normally');
+        const taskCompletionStats = await getTaskCompletionStats();
+        assert(taskCompletionStats && typeof taskCompletionStats.weekly.completionRate === 'number', 'Task completion stats aggregated cleanly');
+
+        // Render Chart.js on task canvas
+        const taskCanvas = document.getElementById('taskCompletionChartCanvas');
+        const taskChart = new Chart(taskCanvas, {
+          type: 'bar',
+          data: {
+            labels: taskCompletionStats.trend7.labels,
+            datasets: [{ label: 'Completed', data: taskCompletionStats.trend7.completed }]
+          },
+          options: { responsive: false }
+        });
+        assert(taskChart !== null && typeof taskChart.destroy === 'function', 'Chart.js successfully renders Task Completion Trend');
+        taskChart.destroy();
+
+        // ==========================================
+        // Final Summary
+        // ==========================================
+        const summary = document.createElement('div');
+        summary.className = 'summary';
+        const isSuccess = passedTests === totalTests;
+        const msg = isSuccess
+          ? `🎉 ALL DAILY STUDY PLANNER & TARGET TRACKER TESTS PASSED (${passedTests}/${totalTests})! FEATURE COMPLETE.`
+          : `❌ TESTS FAILED: ${passedTests} passed out of ${totalTests}.`;
+        summary.innerHTML = `<strong class="${isSuccess ? 'pass' : 'fail'}">${msg}</strong>`;
+        resultsEl.appendChild(summary);
+
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: isSuccess, total: totalTests, passedTests, msg, failures })
+          });
+        } catch (_) {}
+
+      } catch (err) {
+        const div = document.createElement('div');
+        div.className = 'fail';
+        div.textContent = `FATAL TEST ERROR: ${err.message}\n${err.stack}`;
+        resultsEl.appendChild(div);
+        try {
+          fetch('/report_result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passed: false, error: err.message, stack: err.stack })
+          });
+        } catch (_) {}
+      }
+    }
+
+    runPlannerTests();
+  </script>
+</body>
+</html>
