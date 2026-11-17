@@ -75,17 +75,20 @@
 
         // Poll for cache availability
         let cacheFound = false;
+        let matchedCacheKey = null;
         for (let i = 0; i < 25; i++) {
           const keys = await caches.keys();
-          if (keys.includes('studytracker-v1')) {
+          const match = keys.find((k) => k.startsWith('studytracker-'));
+          if (match) {
             cacheFound = true;
+            matchedCacheKey = match;
             break;
           }
           await new Promise((r) => setTimeout(r, 200));
         }
-        assert(cacheFound, 'Cache "studytracker-v1" opened by Service Worker');
+        assert(cacheFound, `Cache "${matchedCacheKey}" opened by Service Worker`);
 
-        const cache = await caches.open('studytracker-v1');
+        const cache = await caches.open(matchedCacheKey);
         const cachedHtml = await cache.match('./index.html');
         assert(cachedHtml !== undefined, 'Cache contains "./index.html"');
 

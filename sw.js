@@ -3,7 +3,7 @@
  * Provides 100% offline functionality and zero-dependency local asset caching.
  */
 
-const CACHE_NAME = 'studytracker-v3';
+const CACHE_NAME = 'studytracker-v4';
 
 const PRECACHE_ASSETS = [
   './',
@@ -15,6 +15,7 @@ const PRECACHE_ASSETS = [
   './assets/lib/chart.umd.min.js',
   './css/main.css',
   './css/dashboard.css',
+  './css/planner.css',
   './css/timer.css',
   './css/history.css',
   './css/statistics.css',
@@ -25,6 +26,7 @@ const PRECACHE_ASSETS = [
   './js/db/migrations.js',
   './js/services/studyService.js',
   './js/services/subjectService.js',
+  './js/services/plannerService.js',
   './js/services/statisticsService.js',
   './js/services/timerService.js',
   './js/services/backupService.js',
@@ -33,8 +35,10 @@ const PRECACHE_ASSETS = [
   './js/components/modal.js',
   './js/components/subjectModal.js',
   './js/components/sessionModal.js',
+  './js/components/taskModal.js',
   './js/components/importModal.js',
   './js/pages/dashboard.js',
+  './js/pages/planner.js',
   './js/pages/timer.js',
   './js/pages/history.js',
   './js/pages/statistics.js',

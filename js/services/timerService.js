@@ -14,6 +14,7 @@ class TimerService {
     this.subjectId = null;
     this.subject = null;
     this.topic = '';
+    this.taskId = null;
     this.startTime = null; // Timestamp ms
     this.endTime = null;   // Timestamp ms
     this.intervalId = null;
@@ -38,6 +39,7 @@ class TimerService {
           this.status = 'running';
           this.subjectId = activeRecord.subjectId;
           this.topic = activeRecord.topic || '';
+          this.taskId = activeRecord.taskId || null;
           this.startTime = Number(activeRecord.startTime);
           this.endTime = null;
           this.subject = await getSubjectById(this.subjectId);
@@ -51,6 +53,7 @@ class TimerService {
           this.status = 'completed';
           this.subjectId = activeRecord.subjectId;
           this.topic = activeRecord.topic || '';
+          this.taskId = activeRecord.taskId || null;
           this.startTime = Number(activeRecord.startTime);
           this.endTime = Number(activeRecord.endTime);
           this.subject = await getSubjectById(this.subjectId);
@@ -73,9 +76,10 @@ class TimerService {
    * @param {Object} options
    * @param {string} options.subjectId
    * @param {string} [options.topic]
+   * @param {string} [options.taskId]
    * @returns {Promise<void>}
    */
-  async start({ subjectId, topic = '' }) {
+  async start({ subjectId, topic = '', taskId = null }) {
     if (this.status === 'running') {
       console.warn('Timer is already running.');
       return;
@@ -93,6 +97,7 @@ class TimerService {
     this.subjectId = subjectId;
     this.subject = subject;
     this.topic = (topic || '').trim();
+    this.taskId = taskId || null;
     this.startTime = Date.now();
     this.endTime = null;
     this.status = 'running';
@@ -103,6 +108,7 @@ class TimerService {
         id: 'current',
         subjectId: this.subjectId,
         topic: this.topic,
+        taskId: this.taskId,
         startTime: this.startTime,
         status: 'running',
         createdAt: new Date().toISOString()
@@ -132,6 +138,7 @@ class TimerService {
         id: 'current',
         subjectId: this.subjectId,
         topic: this.topic,
+        taskId: this.taskId,
         startTime: this.startTime,
         endTime: this.endTime,
         status: 'completed',
@@ -162,6 +169,7 @@ class TimerService {
     const saved = await saveSession({
       subjectId: this.subjectId,
       topic: this.topic,
+      taskId: this.taskId,
       startTime: this.startTime,
       endTime: this.endTime,
       duration: durationSec,
@@ -208,6 +216,7 @@ class TimerService {
       subjectId: this.subjectId,
       subject: this.subject,
       topic: this.topic,
+      taskId: this.taskId,
       startTime: this.startTime,
       endTime: this.endTime
     };
@@ -280,6 +289,7 @@ class TimerService {
     this.subjectId = null;
     this.subject = null;
     this.topic = '';
+    this.taskId = null;
     this.startTime = null;
     this.endTime = null;
     this._updateGlobalPill();

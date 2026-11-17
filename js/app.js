@@ -7,6 +7,7 @@ import { toast } from './components/toast.js';
 import { initDB } from './db/database.js';
 import { timerService } from './services/timerService.js';
 import { renderDashboard, initDashboard } from './pages/dashboard.js';
+import { renderPlanner, initPlanner } from './pages/planner.js';
 import { renderTimer, initTimer } from './pages/timer.js';
 import { renderHistory, initHistory } from './pages/history.js';
 import { renderStatistics, initStatistics } from './pages/statistics.js';
@@ -177,6 +178,7 @@ class App {
   _initMobileIcons() {
     const iconMap = {
       'm-icon-dashboard': 'dashboard',
+      'm-icon-planner': 'planner',
       'm-icon-timer': 'timer',
       'm-icon-history': 'history',
       'm-icon-statistics': 'statistics',
@@ -199,7 +201,7 @@ class App {
   _parseRoute() {
     const hash = window.location.hash || '#/dashboard';
     const clean = hash.replace(/^#\/?/, '').split('?')[0].toLowerCase();
-    const validRoutes = ['dashboard', 'timer', 'history', 'statistics', 'settings'];
+    const validRoutes = ['dashboard', 'planner', 'timer', 'history', 'statistics', 'settings'];
     return validRoutes.includes(clean) ? clean : 'dashboard';
   }
 
@@ -241,6 +243,10 @@ class App {
       case 'dashboard':
         container.innerHTML = renderDashboard();
         this.currentCleanup = initDashboard();
+        break;
+      case 'planner':
+        container.innerHTML = renderPlanner();
+        this.currentCleanup = initPlanner();
         break;
       case 'timer':
         container.innerHTML = renderTimer();

@@ -20,12 +20,14 @@ graph TD
         subgraph EventBus["Event-Driven Bus (CustomEvents)"]
             Evt1["studytracker:sessions-changed"]
             Evt2["studytracker:subjects-changed"]
-            Evt3["studytracker:theme-changed"]
-            Evt4["studytracker:timer-tick"]
+            Evt3["studytracker:tasks-changed"]
+            Evt4["studytracker:theme-changed"]
+            Evt5["studytracker:timer-tick"]
         end
 
         subgraph ServiceLayer["Domain & Business Logic Layer"]
             StudySvc["studyService<br/>(Sessions CRUD & Validation)"]
+            PlannerSvc["plannerService<br/>(Tasks CRUD, Goals, Rates)"]
             SubjSvc["subjectService<br/>(Subjects & Colors)"]
             TimerSvc["timerService<br/>(Stopwatch & Pomodoro Engine)"]
             StatsSvc["statisticsService<br/>(Streaks, KPIs, Daily Inspector)"]
@@ -33,8 +35,8 @@ graph TD
         end
 
         subgraph StorageLayer["Persistence & Offline Layer"]
-            IDB[("IndexedDB: study_tracker_db<br/>• subjects<br/>• sessions<br/>• settings<br/>• timer_state")]
-            SW["Service Worker (sw.js)<br/>Offline Cache Shell (Cache-First)"]
+            IDB[("IndexedDB: studytracker_db (v2)<br/>• subjects<br/>• studySessions (taskId indexed)<br/>• plannedTasks<br/>• settings<br/>• activeSession")]
+            SW["Service Worker (sw.js - v4)<br/>Offline Cache Shell (Cache-First)"]
             LS["LocalStorage<br/>(Theme preference)"]
         end
     end
@@ -66,7 +68,8 @@ d:\study tracker\
 │
 ├── css/                     # Vanilla CSS Design System (Zero Frameworks, Theme-Aware)
 │   ├── main.css             # Design tokens, variables (light/dark), reset, typography, header, mobile nav
-│   ├── dashboard.css        # Hero metrics cards, goal progress bars, subject breakdown
+│   ├── dashboard.css        # Hero metrics cards, goal progress bars, subject breakdown, planner summary
+│   ├── planner.css          # Date navigation, task cards, filters, progress summary, history view
 │   ├── timer.css            # Analog-styled timer ring, digital readout, mode toggle, controls
 │   ├── history.css          # Date-grouped study log, filter toolbar, session items
 │   ├── statistics.css       # Visual analytics charts, Daily Study Inspector, Day-by-Day breakdown
@@ -77,13 +80,14 @@ d:\study tracker\
     │
     ├── db/                  # Persistence Layer
     │   ├── database.js      # Promisified IndexedDB wrapper (get, getAll, put, remove, transaction)
-    │   ├── schema.js        # Object store schemas, field validators, default values
+    │   ├── schema.js        # Object store schemas, field validators, default values (DB Version 2)
     │   └── migrations.js    # Database upgrade pipeline and schema versioning
     │
     ├── services/            # Domain Business Logic Layer
-    │   ├── studyService.js       # Session CRUD, canonical seconds calculation, validation
+    │   ├── studyService.js       # Session CRUD, canonical seconds calculation, taskId associations
+    │   ├── plannerService.js     # Daily planned tasks CRUD, occurrences, target progress, completion rates
     │   ├── subjectService.js     # Subject CRUD, archiving, color validation
-    │   ├── timerService.js       # Timer state machine (Stopwatch & Pomodoro), persistence
+    │   ├── timerService.js       # Timer state machine (Stopwatch & Pomodoro), persistence, task linking
     │   ├── statisticsService.js  # Streaks, 7/30-day KPIs, getDayStatistics, getDailyBreakdown
     │   └── backupService.js      # JSON export, JSON schema validator, conflict merge/overwrite
     │
@@ -91,15 +95,17 @@ d:\study tracker\
     │   ├── icons.js         # Offline Lucide SVG icon generator
     │   ├── toast.js         # Transient notification stack
     │   ├── modal.js         # Accessible modal dialog container with focus trap
+    │   ├── taskModal.js     # Task creator/editor, Plan Again dialog, quick subject picker
     │   ├── subjectModal.js  # Subject creator/editor with interactive palette
     │   ├── sessionModal.js  # Manual session logger & editor
     │   └── importModal.js   # Backup file inspection and confirmation modal
     │
     ├── pages/               # Routed View Controllers
-    │   ├── dashboard.js     # Overview view, streak counters, daily goal gauge, recent sessions
+    │   ├── dashboard.js     # Overview view, streak counters, daily goal gauge, planner summary
+    │   ├── planner.js       # Daily study planner, date navigation, filter toolbar, planner history
     │   ├── timer.js         # Active timer view, stopwatch & pomodoro controls, completion dialog
     │   ├── history.js       # Filterable study log grouped by date, search, edit, delete
-    │   ├── statistics.js    # KPI cards, Daily Trend Chart, Doughnut, Daily Inspector, Day List
+    │   ├── statistics.js    # KPI cards, Daily Trend Chart, Doughnut, Task Completion Stats, Daily Inspector
     │   └── settings.js      # App configuration, goals, subjects list, backup tools
     │
     └── utils/               # Pure Utilities
@@ -115,7 +121,7 @@ d:\study tracker\
 
 ### 3.1. Client-Side Hash Router & Page Lifecycle
 * **Mechanism:** Listens to `window.addEventListener('hashchange', ...)` and `DOMContentLoaded`.
-* **Routes:** `#/dashboard`, `#/timer`, `#/history`, `#/statistics`, `#/settings`. Default route is `#/dashboard`.
+* **Routes:** `#/dashboard`, `#/planner`, `#/timer`, `#/history`, `#/statistics`, `#/settings`. Default route is `#/dashboard`.
 * **View Lifecycle:**
   1. **Tear down (`cleanup`):** Calls the cleanup callback of the previous view to remove window event listeners, cancel intervals, and destroy Chart.js instances to prevent memory leaks.
   2. **Mount:** Injects the HTML template into `<main id="view-container">`.
@@ -123,14 +129,15 @@ d:\study tracker\
   4. **Active Link Sync:** Updates `.active` states on desktop header links and mobile bottom navigation.
 
 ### 3.2. Local-First Database Layer (IndexedDB)
-The application uses IndexedDB (`study_tracker_db`, Version `1`) wrapped in Promises:
+The application uses IndexedDB (`studytracker_db`, Version `2`) wrapped in Promises:
 
 | Object Store | Primary Key | Key Indexes | Purpose |
 | :--- | :--- | :--- | :--- |
-| `subjects` | `id` (string UUID) | `name`, `archived` | Subject categories with custom hex colors and archive states |
-| `sessions` | `id` (string UUID) | `subjectId`, `date`, `startTime` | Completed study sessions with canonical durations and topics |
-| `settings` | `key` (string) | — | User settings (daily goal, pomodoro durations, theme) |
-| `timer_state` | `key` (string) | — | Active running timer state (persisted across tab closes/reloads) |
+| `subjects` | `id` (string UUID) | `name`, `archived`, `createdAt` | Subject categories with custom hex colors and archive states |
+| `studySessions` | `id` (string UUID) | `date`, `subjectId`, `startTime`, `createdAt`, `taskId` | Completed study sessions with canonical durations, topics, and task association |
+| `plannedTasks` | `id` (string UUID) | `targetDate`, `subjectId`, `status`, `priority`, `createdAt`, `sourceTaskId` | Planned study tasks, target durations, priorities, and completion states |
+| `settings` | `id` (string) | — | User settings (daily goal, theme, schema version) |
+| `activeSession` | `id` (string) | — | Active running timer state with task linking (persisted across reloads/crashes) |
 
 ### 3.3. Timer State Machine & Background Persistence
 * **Modes:** `STOPWATCH` (count up) and `POMODORO` (work/break intervals).
@@ -237,10 +244,11 @@ The project includes an integrated browser test runner (`run_tests.py`) that boo
 | **Phase 7** | `test_phase7.html` | Statistics, 7/30-day zero-fill, Chart.js rendering |
 | **Phase 8** | `test_phase8.html` | History filtering, search query, date grouping |
 | **Phase 9** | `test_phase9.html` | Backup export, import strategies, schema validation |
-| **Phase 10** | `test_phase10.html` | Full system end-to-end integration test (49/49 passed) |
+| **Phase 10** | `test_phase10.html` | Full system end-to-end integration test (51/51 passed) |
 | **Phase 11** | `test_phase11.html` | Daily Study Inspector & Day-by-Day breakdown (34/34 passed) |
+| **Phase 12** | `test_phase12.html` | Daily Study Planner & Target Tracker verification (76/76 passed) |
 
 Run all tests via terminal:
 ```powershell
-python run_tests.py test_phase11.html
+python run_tests.py test_phase12.html
 ```

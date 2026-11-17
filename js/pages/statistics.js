@@ -12,9 +12,11 @@ import {
   getDayStatistics,
   getDailyBreakdown
 } from '../services/statisticsService.js';
+import { getTaskCompletionStats } from '../services/plannerService.js';
 
 let trendChartInstance = null;
 let distributionChartInstance = null;
+let taskChartInstance = null;
 let activePeriod = 7;
 let inspectedDate = getLocalDateString(new Date());
 
@@ -169,6 +171,65 @@ export function renderStatistics() {
           </div>
         </div>
       </section>
+
+      <!-- FEATURE: Task Completion Statistics (Tracked separately from study time) -->
+      <section class="task-stats-section" id="section-task-statistics" aria-label="Task Completion Statistics" style="margin-top: 1.5rem;">
+        <div class="breakdown-card">
+          <div class="breakdown-card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+            <div class="breakdown-title-wrap">
+              <div class="breakdown-icon-badge" style="background-color: var(--primary-light); color: var(--primary);">
+                ${icon('checkSquare', { size: 20 })}
+              </div>
+              <div>
+                <h2 class="card-title">Task Completion Statistics</h2>
+                <p class="card-subtitle">Planning consistency and task completion rates (kept separate from study duration).</p>
+              </div>
+            </div>
+            <a href="#/planner" class="btn btn-secondary btn-sm">
+              ${icon('planner', { size: 14 })}
+              <span>Open Planner</span>
+            </a>
+          </div>
+
+          <!-- Task Metric Tiles -->
+          <div class="stats-summary-grid" style="margin-top: 1rem; margin-bottom: 1.25rem;">
+            <div class="stat-box">
+              <span class="stat-box-label">Today's Completion</span>
+              <span class="stat-box-val" id="task-stat-today-rate" style="color: var(--primary);">0%</span>
+              <span class="stat-box-sub" id="task-stat-today-counts">0 / 0 tasks completed</span>
+            </div>
+
+            <div class="stat-box">
+              <span class="stat-box-label">Weekly Rate (7 Days)</span>
+              <span class="stat-box-val" id="task-stat-week-rate" style="color: var(--success);">0%</span>
+              <span class="stat-box-sub" id="task-stat-week-counts">0 completed</span>
+            </div>
+
+            <div class="stat-box">
+              <span class="stat-box-label">Monthly Rate (30 Days)</span>
+              <span class="stat-box-val" id="task-stat-month-rate" style="color: var(--primary);">0%</span>
+              <span class="stat-box-sub" id="task-stat-month-counts">0 completed</span>
+            </div>
+
+            <div class="stat-box">
+              <span class="stat-box-label">Planned vs Completed</span>
+              <span class="stat-box-val" id="task-stat-total-ratio">0 / 0</span>
+              <span class="stat-box-sub" id="task-stat-period-label">Selected period tasks</span>
+            </div>
+          </div>
+
+          <!-- Daily Task Completion Trend Chart -->
+          <div style="margin-top: 1.25rem;">
+            <h3 style="font-size: 0.95rem; font-weight: 700; color: var(--text-primary); margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.4rem;">
+              ${icon('trendingUp', { size: 16 })}
+              <span id="task-chart-title">Daily Task Completion Trend (Last 7 Days)</span>
+            </h3>
+            <div class="chart-canvas-wrap" style="height: 260px;">
+              <canvas id="taskCompletionChartCanvas" aria-label="Task completion trend chart" role="img"></canvas>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   `;
 }
@@ -184,6 +245,10 @@ function destroyCharts() {
   if (distributionChartInstance) {
     distributionChartInstance.destroy();
     distributionChartInstance = null;
+  }
+  if (taskChartInstance) {
+    taskChartInstance.destroy();
+    taskChartInstance = null;
   }
 }
 
@@ -655,11 +720,186 @@ async function loadAndRenderStatistics(periodDays = 7) {
     // 4. Render Day Inspector & Daily Breakdown List
     await Promise.all([
       renderDayInspector(inspectedDate),
-      renderDailyBreakdownList(periodDays)
+      renderDailyBreakdownList(periodDays),
+      renderTaskCompletionStatistics(periodDays)
     ]);
 
   } catch (err) {
     console.error('Failed to load statistics view:', err);
+  }
+}
+
+/**
+ * Renders the dedicated Task Completion Statistics section and Chart.js trend.
+ * @param {number} periodDays
+ */
+async function renderTaskCompletionStatistics(periodDays = 7) {
+  try {
+    const taskStats = await getTaskCompletionStats();
+
+    // 1. KPI Tiles
+    const todayRateEl = document.getElementById('task-stat-today-rate');
+    const todayCountsEl = document.getElementById('task-stat-today-counts');
+    const weekRateEl = document.getElementById('task-stat-week-rate');
+    const weekCountsEl = document.getElementById('task-stat-week-counts');
+    const monthRateEl = document.getElementById('task-stat-month-rate');
+    const monthCountsEl = document.getElementById('task-stat-month-counts');
+    const ratioEl = document.getElementById('task-stat-total-ratio');
+    const periodLabelEl = document.getElementById('task-stat-period-label');
+    const chartTitleEl = document.getElementById('task-chart-title');
+
+    if (todayRateEl) todayRateEl.textContent = `${taskStats.today.completionRate}%`;
+    if (todayCountsEl) todayCountsEl.textContent = `${taskStats.today.completed} / ${taskStats.today.total} tasks completed`;
+
+    if (weekRateEl) weekRateEl.textContent = `${taskStats.weekly.completionRate}%`;
+    if (weekCountsEl) weekCountsEl.textContent = `${taskStats.weekly.totalCompleted} / ${taskStats.weekly.totalPlanned} tasks completed`;
+
+    if (monthRateEl) monthRateEl.textContent = `${taskStats.monthly.completionRate}%`;
+    if (monthCountsEl) monthCountsEl.textContent = `${taskStats.monthly.totalCompleted} / ${taskStats.monthly.totalPlanned} tasks completed`;
+
+    const activePeriodStats = periodDays === 30 ? taskStats.monthly : taskStats.weekly;
+    if (ratioEl) ratioEl.textContent = `${activePeriodStats.totalCompleted} / ${activePeriodStats.totalPlanned}`;
+    if (periodLabelEl) periodLabelEl.textContent = `Last ${periodDays} days completed / planned`;
+    if (chartTitleEl) chartTitleEl.textContent = `Daily Task Completion Trend (Last ${periodDays} Days)`;
+
+    // 2. Chart.js rendering
+    const ChartJS = window.Chart;
+    const canvas = document.getElementById('taskCompletionChartCanvas');
+    if (ChartJS && canvas) {
+      if (taskChartInstance) {
+        taskChartInstance.destroy();
+        taskChartInstance = null;
+      }
+
+      const trend = periodDays === 30 ? taskStats.trend30 : taskStats.trend7;
+      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      const textColor = isDark ? '#94a3b8' : '#64748b';
+      const gridColor = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+      const plannedColor = isDark ? 'rgba(148, 163, 184, 0.45)' : 'rgba(203, 213, 225, 0.8)';
+      const completedColor = isDark ? '#10b981' : '#059669';
+      const rateLineColor = isDark ? '#60a5fa' : '#2563eb';
+
+      const ctx = canvas.getContext('2d');
+      taskChartInstance = new ChartJS(ctx, {
+        type: 'bar',
+        data: {
+          labels: trend.labels,
+          datasets: [
+            {
+              type: 'line',
+              label: 'Completion Rate (%)',
+              data: trend.rates,
+              borderColor: rateLineColor,
+              backgroundColor: 'transparent',
+              borderWidth: 2.5,
+              tension: 0.3,
+              pointRadius: 4,
+              pointHoverRadius: 6,
+              pointBackgroundColor: rateLineColor,
+              yAxisID: 'yRate'
+            },
+            {
+              type: 'bar',
+              label: 'Completed Tasks',
+              data: trend.completed,
+              backgroundColor: completedColor,
+              borderRadius: 4,
+              yAxisID: 'yCount'
+            },
+            {
+              type: 'bar',
+              label: 'Planned Tasks',
+              data: trend.planned,
+              backgroundColor: plannedColor,
+              borderRadius: 4,
+              yAxisID: 'yCount'
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            mode: 'index',
+            intersect: false
+          },
+          plugins: {
+            legend: {
+              display: true,
+              position: 'top',
+              labels: {
+                color: textColor,
+                boxWidth: 12,
+                font: { size: 12 }
+              }
+            },
+            tooltip: {
+              callbacks: {
+                title: (items) => {
+                  if (items.length > 0) {
+                    const idx = items[0].dataIndex;
+                    return `Date: ${trend.dates[idx]}`;
+                  }
+                  return '';
+                },
+                label: (context) => {
+                  if (context.dataset.type === 'line') {
+                    return ` Completion Rate: ${context.parsed.y}%`;
+                  }
+                  return ` ${context.dataset.label}: ${context.parsed.y}`;
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              grid: { color: gridColor },
+              ticks: {
+                color: textColor,
+                font: { size: periodDays === 30 ? 10 : 12 },
+                maxTicksLimit: 12
+              }
+            },
+            yCount: {
+              type: 'linear',
+              position: 'left',
+              beginAtZero: true,
+              grid: { color: gridColor },
+              ticks: {
+                color: textColor,
+                stepSize: 1,
+                precision: 0
+              },
+              title: {
+                display: true,
+                text: 'Tasks Count',
+                color: textColor,
+                font: { size: 11 }
+              }
+            },
+            yRate: {
+              type: 'linear',
+              position: 'right',
+              beginAtZero: true,
+              max: 100,
+              grid: { display: false },
+              ticks: {
+                color: rateLineColor,
+                callback: (val) => `${val}%`
+              },
+              title: {
+                display: true,
+                text: 'Rate (%)',
+                color: rateLineColor,
+                font: { size: 11 }
+              }
+            }
+          }
+        }
+      });
+    }
+  } catch (err) {
+    console.error('Failed to render task completion statistics:', err);
   }
 }
 
@@ -733,11 +973,13 @@ export function initStatistics() {
   window.addEventListener('studytracker:sessions-changed', handleUpdate);
   window.addEventListener('studytracker:subjects-changed', handleUpdate);
   window.addEventListener('studytracker:theme-changed', handleThemeUpdate);
+  window.addEventListener('studytracker:tasks-changed', handleUpdate);
 
   return () => {
     window.removeEventListener('studytracker:sessions-changed', handleUpdate);
     window.removeEventListener('studytracker:subjects-changed', handleUpdate);
     window.removeEventListener('studytracker:theme-changed', handleThemeUpdate);
+    window.removeEventListener('studytracker:tasks-changed', handleUpdate);
     destroyCharts();
   };
 }

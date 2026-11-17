@@ -41,4 +41,26 @@ export function runMigrations(db, transaction, oldVersion, newVersion) {
       db.createObjectStore(STORES.ACTIVE_SESSION, { keyPath: 'id' });
     }
   }
+
+  // Version 2 Migration: Daily Study Planner & Target Tracker
+  if (oldVersion < 2) {
+    // 5. Planned Tasks Store
+    if (!db.objectStoreNames.contains(STORES.PLANNED_TASKS)) {
+      const taskStore = db.createObjectStore(STORES.PLANNED_TASKS, { keyPath: 'id' });
+      taskStore.createIndex('targetDate', 'targetDate', { unique: false });
+      taskStore.createIndex('subjectId', 'subjectId', { unique: false });
+      taskStore.createIndex('status', 'status', { unique: false });
+      taskStore.createIndex('priority', 'priority', { unique: false });
+      taskStore.createIndex('createdAt', 'createdAt', { unique: false });
+      taskStore.createIndex('sourceTaskId', 'sourceTaskId', { unique: false });
+    }
+
+    // Add taskId index to sessions store
+    if (db.objectStoreNames.contains(STORES.SESSIONS)) {
+      const sessionStore = transaction.objectStore(STORES.SESSIONS);
+      if (!sessionStore.indexNames.contains('taskId')) {
+        sessionStore.createIndex('taskId', 'taskId', { unique: false });
+      }
+    }
+  }
 }

@@ -46,6 +46,7 @@ export async function saveSession(data) {
     id: data.id || generateId(),
     subjectId: data.subjectId,
     topic: (data.topic || '').trim(),
+    taskId: data.taskId || null,
     startTime: startObj.toISOString(),
     endTime: endObj.toISOString(),
     duration: durationSec,
@@ -100,6 +101,7 @@ export async function updateSession(id, updates) {
 
   if (updates.subjectId) session.subjectId = updates.subjectId;
   if (updates.topic !== undefined) session.topic = (updates.topic || '').trim();
+  if (updates.taskId !== undefined) session.taskId = updates.taskId || null;
   if (updates.notes !== undefined) session.notes = (updates.notes || '').trim();
 
   if (updates.startTime) session.startTime = new Date(updates.startTime).toISOString();
@@ -178,5 +180,22 @@ export async function getSessionsBySubject(subjectId) {
   } catch (_) {
     const all = await getAllSessions();
     return all.filter((s) => s.subjectId === subjectId);
+  }
+}
+
+/**
+ * Retrieves sessions associated with a specific planned task ID.
+ * @param {string} taskId
+ * @returns {Promise<Array<Object>>}
+ */
+export async function getSessionsByTaskId(taskId) {
+  if (!taskId) return [];
+  try {
+    const list = await getAllByIndex(STORES.SESSIONS, 'taskId', taskId);
+    list.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+    return list;
+  } catch (_) {
+    const all = await getAllSessions();
+    return all.filter((s) => s.taskId === taskId);
   }
 }
